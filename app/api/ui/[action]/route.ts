@@ -2,7 +2,8 @@
 import { config } from "@/lib/config";
 import { type CardFilters, type PostFilters } from "@/lib/metabase";
 import { runSelection, undoRun, listRuns } from "@/lib/runs";
-import { checkPassword, sessionCookie, clearCookie, currentUser, freshSearch, listPrompts, addPrompt, renamePrompt, deletePrompt } from "@/lib/ui";
+import { passwordRequired, checkPassword, sessionCookie, clearCookie, currentUser, listPrompts, addPrompt, renamePrompt, deletePrompt } from "@/lib/ui";
+import { smartSearch } from "@/lib/search";
 
 export const maxDuration = 300;
 
@@ -14,6 +15,7 @@ type Ctx = { params: Promise<{ action: string }> };
 
 export async function GET(req: Request, ctx: Ctx) {
   const { action } = await ctx.params;
+  if (action === "config") return json({ password_required: passwordRequired() });
   const user = currentUser(req);
   if (!user) return json({ error: "signed_out" }, 401);
   try {
@@ -59,13 +61,13 @@ export async function POST(req: Request, ctx: Ctx) {
   try {
     switch (action) {
       case "find": {
-        // Every prompt pulls question 4131 fresh: names, sets, parallels and cards all come from this pull.
-        const r = await freshSearch(String(body.text ?? ""));
+        // Every prompt queries question 4131 fresh, using its own filters (only matching cards come back).
+        const r = await smartSearch(String(body.text ?? ""));
         const LIMIT = 3000;
         return json({
           parsed: r.parsed,
           has_filter: r.has_filter,
-          warehouse_cards: r.warehouse_cards,
+          queries: r.queries,
           ms: r.ms,
           total: r.rows.length,
           missing: r.missing,
@@ -90,6 +92,7 @@ export async function POST(req: Request, ctx: Ctx) {
             tag: (body.tag as string) ?? null,
             mode: body.mode === "skip_tagged" ? "skip_tagged" : "overwrite",
             item_ids: Array.isArray(body.item_ids) ? (body.item_ids as string[]) : [],
+            queries: Array.isArray(body.queries) ? (body.queries as CardFilters[]) : undefined,
             dry_run: body.dry_run === true,
             user,
           })

@@ -12,8 +12,8 @@ export type CardFilters = {
   min_estimated_value?: number;
   max_estimated_value?: number;
   tag?: string; // contains-match on current tag (question's own filter)
-  cert_number?: string;
-  ac_number?: string;
+  cert_number?: string | string[];
+  ac_number?: string | string[];
   min_ev_age_days?: number;
   max_ev_age_days?: number;
   min_times_sold_back?: number;
@@ -137,7 +137,7 @@ function toRow(obj: Record<string, unknown>): CardRow {
 
 // Question 4131 takes one value per filter. For lists (e.g. several players) the server
 // runs one query per combination and merges the results by ITEM_ID.
-const LIST_KEYS = ["player_name", "set_name", "parallel_name", "grade"] as const;
+const LIST_KEYS = ["player_name", "set_name", "parallel_name", "grade", "ac_number", "cert_number"] as const;
 const MAX_QUERIES = 50; // e.g. 25 names × 2 sets
 
 type SingleFilters = { [K in keyof CardFilters]: CardFilters[K] extends string | string[] | undefined ? string : CardFilters[K] };
@@ -215,6 +215,9 @@ async function queryOnce(filters: CardFilters, post: PostFilters = {}): Promise<
 
   if (post.only_untagged) rows = rows.filter((r) => !r.tag);
   if (post.only_base) rows = rows.filter((r) => !r.parallel_name);
+  // 4131's number filters are "contains"; keep exact matches only
+  if (typeof filters.ac_number === "string") rows = rows.filter((r) => r.ac_number === filters.ac_number);
+  if (typeof filters.cert_number === "string") rows = rows.filter((r) => r.cert_number === filters.cert_number);
   if (post.current_tag_exact) rows = rows.filter((r) => r.tag === post.current_tag_exact);
   return rows;
 }

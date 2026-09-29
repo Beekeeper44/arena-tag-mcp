@@ -323,6 +323,7 @@ export async function runSelection(input: {
   tag?: string | null;
   mode?: "overwrite" | "skip_tagged";
   item_ids: string[];
+  queries?: CardFilters[]; // the exact 4131 searches the screen ran; re-run fresh before writing
   dry_run?: boolean;
   user: string;
 }) {
@@ -337,7 +338,10 @@ export async function runSelection(input: {
   if (wanted.length > config.maxItemsPerRun()) throw new Error(`${wanted.length} cards is over the ${config.maxItemsPerRun()}-card limit.`);
 
   // Re-check against live data: only cards that still match the request (and still need changing) are written.
-  const rows = applyMode(await queryCards(input.filters, input.post_filters ?? {}), action, tag, input.mode ?? "overwrite");
+  const fresh = input.queries?.length
+    ? (await Promise.all(input.queries.slice(0, 60).map((q1) => queryCards(q1, input.post_filters ?? {})))).flat()
+    : await queryCards(input.filters, input.post_filters ?? {});
+  const rows = applyMode(fresh, action, tag, input.mode ?? "overwrite");
   const byId = new Map(rows.map((r) => [r.item_id, r]));
   const chosen = wanted.map((id) => byId.get(id)).filter((r): r is CardRow => !!r);
   const dropped = wanted.length - chosen.length;

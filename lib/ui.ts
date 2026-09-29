@@ -1,8 +1,6 @@
 // Web app helpers: sign-in, the card-name lexicon, saved prompts.
 import { createHmac, randomBytes, timingSafeEqual } from "crypto";
 import { config } from "./config";
-import { queryCards } from "./metabase";
-import { buildLexiconFromRows, parseRequest, filterRows, like } from "./parse";
 import { q } from "./db";
 
 // ---------- sign-in ----------
@@ -11,9 +9,12 @@ const COOKIE = "tb_session";
 const secret = () => `${config.mcpAccessKey()}::${process.env.APP_PASSWORD ?? ""}`;
 const mac = (v: string) => createHmac("sha256", secret()).update(v).digest("base64url");
 
+export const passwordRequired = () => !!process.env.APP_PASSWORD;
+
+// With no APP_PASSWORD set, sign-in is name only (the name is what runs are logged under).
 export function checkPassword(pw: string): boolean {
   const want = process.env.APP_PASSWORD;
-  if (!want) throw new Error("APP_PASSWORD is not set in Vercel.");
+  if (!want) return true;
   const a = Buffer.from(pw), b = Buffer.from(want);
   return a.length === b.length && timingSafeEqual(a, b);
 }
@@ -32,19 +33,6 @@ export function currentUser(req: Request): string | null {
   const good = mac(v);
   if (good.length !== sig.length || !timingSafeEqual(Buffer.from(good), Buffer.from(sig))) return null;
   return Buffer.from(v, "base64url").toString();
-}
-
-// ---------- fresh search: one pull of 4131 per prompt, used for both reading the request and finding cards ----------
-export async function freshSearch(text: string) {
-  const t0 = Date.now();
-  const rows = await queryCards({});
-  const lex = buildLexiconFromRows(rows);
-  const parsed = parseRequest(text, lex);
-  const hasFilter = Object.keys(parsed.filters).length > 0 || !!parsed.post_filters.only_base;
-  const matched = hasFilter ? filterRows(rows, parsed.filters, parsed.post_filters) : [];
-  const names = ([] as string[]).concat((parsed.filters.player_name as string | string[] | undefined) ?? []);
-  const missing = names.filter((n) => !matched.some((c) => like(c.player_name, n)));
-  return { parsed, rows: matched, missing, warehouse_cards: rows.length, ms: Date.now() - t0, has_filter: hasFilter };
 }
 
 // ---------- saved prompts (shared by the team) ----------

@@ -227,9 +227,10 @@ dialog .acts{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}
   <form class="loginbox" id="loginForm" autocomplete="on">
     <h2>Tag <span>Bot</span></h2>
     <label>Your name<input id="lname" autocomplete="name" required></label>
-    <label>Team password<input id="lpass" type="password" autocomplete="current-password" required></label>
+    <label id="lpassWrap">Team password<input id="lpass" type="password" autocomplete="current-password"></label>
     <div id="lerr" class="small" style="color:var(--warn);min-height:18px"></div>
-    <button class="btn primary big" type="submit">Sign in</button>
+    <button class="btn primary big" type="submit">Continue</button>
+    <div class="dim small">Your name is recorded on every run you make.</div>
   </form>
 </div>
 
@@ -391,15 +392,16 @@ async function find(text){
   requestAnimationFrame(()=>{const i=$("#input");i.style.height="auto";i.style.height=Math.min(i.scrollHeight+2,200)+"px"});
   if(!text.trim()) return;
   const seq=++findSeq;
-  $("#empty").hidden=false; $("#empty").innerHTML=`<span class="spin"></span>Pulling fresh cards from Metabase 4131…`; $("#summary").innerHTML=""; $("#grid").innerHTML=""; $("#bar").hidden=true;
+  $("#empty").hidden=false; $("#empty").innerHTML=`<span class="spin"></span>Searching Metabase 4131…`; $("#summary").innerHTML=""; $("#grid").innerHTML=""; $("#bar").hidden=true;
   let res;
   try{ res=await api("find",{text}); }
   catch(e){ if(seq===findSeq) showEmpty(e.message); return; }
   if(seq!==findSeq) return;
-  $("#srcCount").textContent=`· ${res.warehouse_cards.toLocaleString()} cards · pulled ${new Date().toLocaleTimeString([], {hour:"numeric",minute:"2-digit",second:"2-digit"})} (${(res.ms/1000).toFixed(1)}s)`;
-  if(!res.has_filter){ showEmpty("Add at least one filter: a player, set, parallel, grade or value range."); return; }
+  const at=new Date().toLocaleTimeString([], {hour:"numeric",minute:"2-digit",second:"2-digit"});
+  $("#srcCount").textContent=`· ${res.total.toLocaleString()} matching · pulled ${at} (${(res.ms/1000).toFixed(1)}s)`;
+  if(!res.has_filter){ showEmpty("Add at least one filter: a player, set, parallel, grade, value range, AC number or cert number."); return; }
   const p=res.parsed;
-  S={action:p.action, mode:p.mode, filters:p.filters, post:p.post_filters, tag:p.tag||"", matched:res.cards, total:res.total, missing:res.missing||[], phase:"review", prev:new Map(), limit:240};
+  S={queries:res.queries, action:p.action, mode:p.mode, filters:p.filters, post:p.post_filters, tag:p.tag||"", matched:res.cards, total:res.total, missing:res.missing||[], phase:"review", prev:new Map(), limit:240};
   $("#confirmBtn").hidden=false; $("#dryWrap").hidden=false;
   recompute(true);
 }
@@ -419,7 +421,7 @@ function render(){
   const sel=S.rows.filter(r=>S.selected.has(r.item_id));
   const ev=sel.reduce((s,r)=>s+r.ev,0);
   const replacing=S.action==="set"?sel.filter(r=>r.tag&&r.tag!==S.tag).length:0;
-  const lab={player_name:"player",set_name:"set",parallel_name:"parallel",grading_company:"grader",grade:"grade",min_estimated_value:"min",max_estimated_value:"max",sport:"sport",tag:"current tag"};
+  const lab={contains:"also matches",ac_number:"AC #",cert_number:"cert",player_name:"player",set_name:"set",parallel_name:"parallel",grading_company:"grader",grade:"grade",min_estimated_value:"min",max_estimated_value:"max",sport:"sport",tag:"current tag"};
   const chips=Object.entries(S.filters).map(([k,v])=>`<span class="chip"><i>${Array.isArray(v)?`${lab[k]||k}s (${v.length})`:(lab[k]||k)}</i> ${esc(k.includes("value")?money(v):v==="__base__"?"base (no parallel)":Array.isArray(v)?v.join(" or "):String(v).replace("%"," "))}</span>`).join("");
   const locked=S.phase!=="review";
   $("#summary").innerHTML=`<div class="summary">
@@ -440,7 +442,7 @@ function render(){
       ${S.total>S.matched.length?`<div class="small" style="color:var(--warn)">Showing the first ${S.matched.length.toLocaleString()} of ${S.total.toLocaleString()} matches. Narrow the request.</div>`:""}
       ${locked?"":`<div class="selbar"><button class="btn link" type="button" id="all">Select all</button><button class="btn link" type="button" id="none">Clear</button></div>`}
     </div>
-    ${S.missing&&S.missing.length&&!locked?`<div class="warn"><b>No cards match these filters for ${esc(S.missing.join(", "))}.</b> ${S.missing.length<[].concat(S.filters.player_name).length?"Showing only the names that matched.":"Nothing else was selected."}</div>`:""}
+    ${S.missing&&S.missing.length&&!locked?`<div class="warn"><b>Nothing found for ${esc(S.missing.join(", "))}.</b> ${S.missing.length<[].concat(S.filters.player_name).length?"Showing only the names that matched.":"Nothing else was selected."}</div>`:""}
     ${replacing&&!locked?`<div class="warn"><b>${replacing} selected ${replacing===1?"card already has":"cards already have"} a different tag.</b> A card holds one tag, so it will be replaced. Tick "Skip cards that already have a tag" or deselect them to keep it.</div>`:""}
   </div>`;
   const showRows=(S.phase==="done"&&!S.showAll)?S.done:S.rows;
@@ -526,10 +528,11 @@ function renderBar(n,replacing){
   const cb=$("#confirmBtn"), msg=$("#barmsg");
   if(S.phase==="review"){
     const bad=S.action==="set"&&!/^[a-z0-9_]+$/.test(S.tag);
-    cb.hidden=false; cb.disabled=!n||bad||n>100;
+    const CAP=window.MAX_ITEMS||100;
+    cb.hidden=false; cb.disabled=!n||bad||n>CAP;
     cb.textContent=S.action==="set"?`Confirm tags (${n})`:`Remove tags (${n})`;
     cb.className="btn big "+(S.action==="set"?"primary":"danger");
-    msg.innerHTML=bad?`<span style="color:var(--warn)">Enter a tag: lowercase letters, numbers and underscores.</span>`:n>100?`<span style="color:var(--warn)">${n} cards is over the 100-card limit. Deselect some or narrow the request.</span>`:
+    msg.innerHTML=bad?`<span style="color:var(--warn)">Enter a tag: lowercase letters, numbers and underscores.</span>`:n>CAP?`<span style="color:var(--warn)">${n.toLocaleString()} cards is over the ${CAP.toLocaleString()}-card limit. Deselect some or narrow the request.</span>`:
       `<b>${n}</b> cards will ${S.action==="set"?`get <b>#${esc(S.tag)}</b>`:"have their tag removed"}${replacing?` · ${replacing} replace an existing tag`:""}`;
   }
 }
@@ -583,10 +586,10 @@ async function run(sel,dry){
   S.phase="working"; S.undone=false; S.showAll=false; S.prevAll=new Map(sel.map(r=>[r.item_id,r.tag])); render(); $("#dryWrap").hidden=true;
   const target=S.action==="set"?S.tag:null;
   $("#confirmBtn").hidden=true;
-  $("#barmsg").innerHTML=`<span class="spin"></span>${dry?"Dry run":"Writing to admin"}… ${sel.length} cards`;
+  $("#barmsg").innerHTML=`<span class="spin"></span>${dry?"Dry run":"Writing to admin"}… ${sel.length.toLocaleString()} cards${!dry&&sel.length>200?` (about ${Math.ceil(sel.length*0.2/5)}s — keep this tab open)`:""}`;
   let res;
   try{
-    res=await api("apply",{filters:S.filters,post_filters:S.post,action:S.action,tag:target,mode:S.mode,item_ids:sel.map(r=>r.item_id),dry_run:dry});
+    res=await api("apply",{filters:S.filters,queries:S.queries,post_filters:S.post,action:S.action,tag:target,mode:S.mode,item_ids:sel.map(r=>r.item_id),dry_run:dry});
   }catch(e){
     S.phase="review"; render(); $("#confirmBtn").hidden=false; $("#dryWrap").hidden=false;
     $("#barmsg").innerHTML=`<span style="color:var(--warn)">${esc(e.message)}</span>`; return;
@@ -706,7 +709,10 @@ $("#input").addEventListener("input",()=>{
 });
 
 /* ---------- sign-in + start-up ---------- */
-function showLogin(){ $("#login").hidden=false; setTimeout(()=>$("#lname").focus(),0); }
+async function showLogin(){
+  $("#login").hidden=false; setTimeout(()=>$("#lname").focus(),0);
+  try{ const c=await (await fetch("/api/ui/config",{credentials:"same-origin"})).json(); $("#lpassWrap").hidden=!c.password_required; $("#lpass").required=!!c.password_required; }catch{}
+}
 $("#loginForm").onsubmit=async e=>{
   e.preventDefault(); $("#lerr").textContent="";
   try{
@@ -721,6 +727,7 @@ async function boot(){
   let me;
   try{ me=await api("me"); }catch{ return; }
   $("#whoami").textContent=`Signed in as ${me.user}`;
+  window.MAX_ITEMS=me.max_items_per_run||100;
   const b=$("#modeBadge");
   if(me.dry_run){ b.textContent="DRY RUN — nothing is written"; b.className="mode"; $("#dry").checked=true; $("#dry").disabled=true; $("#foot").textContent="DRY_RUN is on in Vercel, so every run is recorded but nothing is written to admin."; }
   else{ b.textContent="LIVE — writes to admin"; b.className="mode live"; }

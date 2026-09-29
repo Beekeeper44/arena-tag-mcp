@@ -2,10 +2,10 @@
 
 Two ways in, same engine, same Neon run log:
 
-- **Tag Bot screen** at `https://<project>.vercel.app/`: sign in with your name + `APP_PASSWORD`, type a request, see the matching slabs, deselect any, **Confirm tags**, then Undo if needed. Saved prompts are shared by everyone who signs in.
+- **Tag Bot screen** at `https://<project>.vercel.app/`: sign in with your name (plus `APP_PASSWORD` if you set one), type a request, see the matching slabs, deselect any, **Confirm tags**, then Undo if needed. Saved prompts are shared by everyone who signs in.
 - **Claude connector** at `/api/mcp?key=<MCP_ACCESS_KEY>`: the same actions from a Claude chat.
 
-Every search on the screen pulls question 4131 fresh (no cache): the same pull is used to recognise player, set and parallel names and to find the cards. Confirm re-checks the selected cards against 4131 again before writing.
+Every search on the screen queries question 4131 fresh (no cache) using its own filters: each name you type goes into the player filter (then set, then parallel if nothing matches), AC/cert numbers go into the number filters, so only matching cards come back. Confirm re-runs those same searches before writing.
 
 MCP server for bulk-tagging warehouse cards in Arena admin from plain directions typed in Claude.
 

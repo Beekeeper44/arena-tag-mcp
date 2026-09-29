@@ -32,7 +32,7 @@ function buildLexicon(cards){
     }
     if(c.set_name){ const noYear=c.set_name.toLowerCase().replace(/^\s*\d{4}(-\d{2})?\s+/,"").trim(); if(noYear.length>=4) sets.add(noYear); words(c.set_name).forEach(w=>vocab.add(w)); }
     if(c.parallel_name){ pars.add(c.parallel_name.toLowerCase().trim()); words(c.parallel_name).forEach(w=>vocab.add(w)); }
-    if(c.sport){ sports.add(c.sport.toLowerCase()); vocab.add(c.sport.toLowerCase()); }
+    if(c.sport){ sports.add(c.sport.toLowerCase()); vocab.add(c.sport.toLowerCase()); words(c.sport.replace(/_/g," ")).forEach(w=>vocab.add(w)); }
   }
   const byLen=a=>[...a].sort((x,y)=>y.length-x.length);
   return {full,last,lastParts,nameParts,vocab,sets:byLen(sets),pars:byLen(pars),sports:[...sports]};
@@ -66,7 +66,7 @@ function readRequest(text){
   const yr=body.match(/\b((?:19|20)\d\d)\b/); if(yr){ f.set_name=f.set_name?`${yr[1]}%${f.set_name}`:yr[1]; }
   for(const ph of LEX.pars){ if(hasPhrase(rest,ph)){ f.parallel_name=ph.replace(/\b\w/g,c=>c.toUpperCase()); rest=rest.replace(new RegExp(ph.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")+"(?:s|es)?","g")," "); break; } }
   if(/\bbase\b/.test(rest)&&!f.parallel_name&&!/base set/.test(body)) f.parallel_name="__base__";
-  for(const sp of LEX.sports) if(hasPhrase(body,sp)) f.sport=sp;
+  for(const sp of LEX.sports){ const spoken=sp.replace(/_/g," "); if(hasPhrase(body,sp)||hasPhrase(body,spoken)){ f.sport=sp; rest=rest.replace(spoken," ").replace(sp," "); } }
 
   // names: full names, then last names, nicknames, close spellings; every other unknown word stays as a name
   const names=[], used=new Set();
@@ -110,9 +110,36 @@ export function buildLexiconFromRows(rows: CardRow[]) {
   return buildLexicon(rows.map((r) => ({ player_name: r.player_name, set_name: r.set_name, parallel_name: r.parallel_name, sport: r.sport })));
 }
 
+// AC numbers (e.g. 4017585) and cert numbers, with or without a label:
+// "8ac 4017585", "ac# 4017585, 4017577", "8ac_number 4017585", "cert 119205725", or bare numbers.
+export function extractIds(text: string) {
+  const ac = new Set<string>(), cert = new Set<string>();
+  let t = " " + text + " ";
+  const grab = (re: RegExp, into: Set<string>) => {
+    t = t.replace(re, (_m, list) => { String(list).match(/\d{5,12}/g)?.forEach((n) => into.add(n)); return " "; });
+  };
+  const LIST = "((?:\\s*[#:=]?\\s*\\d{5,12}(?:\\s*(?:,|and|&|\\/)?\\s*))+)";
+  grab(new RegExp("\\b(?:8\\s*ac|ac)(?:[_\\s-]*(?:number|num|no|#))?s?" + LIST, "gi"), ac);
+  grab(new RegExp("\\bcerts?(?:[_\\s-]*(?:number|num|no|#))?s?" + LIST, "gi"), cert);
+  // unlabeled numbers: 6–7 digits = AC number, 8–10 digits = cert (money and years excluded)
+  t = t.replace(/(^|[^$\d.,])(\d{6,10})(?![\d,.]*\s*k\b)(?=$|[^\d])/gi, (m, pre, n) => {
+    if (/^(19|20)\d\d$/.test(n)) return m;
+    (n.length <= 7 ? ac : cert).add(n);
+    return pre + " ";
+  });
+  return { ac: [...ac], cert: [...cert], rest: t.trim() };
+}
+
 export function parseRequest(text: string, lex) {
   LEX = lex; // readRequest is synchronous, so this is safe per call
-  const p = readRequest(text);
+  const ids = extractIds(text);
+  const p = readRequest(ids.rest);
+  if (ids.ac.length || ids.cert.length) {
+    // An exact card number beats guessed names: drop name guesses, keep the rest of the filters.
+    delete p.filters.player_name;
+    if (ids.ac.length) p.filters.ac_number = ids.ac.length === 1 ? ids.ac[0] : ids.ac;
+    if (ids.cert.length) p.filters.cert_number = ids.cert.length === 1 ? ids.cert[0] : ids.cert;
+  }
   const filters = Object.fromEntries(Object.entries(p.filters).filter(([, v]) => v != null && v !== ""));
   const post: Record<string, boolean> = {};
   if (filters.parallel_name === "__base__") { delete filters.parallel_name; post.only_base = true; }
@@ -140,9 +167,13 @@ export function filterRows(rows: CardRow[], f, post = {}) {
     (!f.grade || any(c.grade, f.grade)) &&
     (f.min_estimated_value == null || (c.estimated_value ?? 0) >= f.min_estimated_value) &&
     (f.max_estimated_value == null || (c.estimated_value ?? 0) <= f.max_estimated_value) &&
-    (!f.tag || like(c.tag, f.tag))
+    (!f.tag || like(c.tag, f.tag)) &&
+    (!f.ac_number || [].concat(f.ac_number).includes(String(c.ac_number ?? ""))) &&
+    (!f.cert_number || [].concat(f.cert_number).includes(String(c.cert_number ?? "")))
   );
   if (post.only_untagged) out = out.filter((r) => !r.tag);
   if (post.only_base) out = out.filter((r) => !r.parallel_name);
   return out;
 }
+
+export { STOP, ALIAS, GENERIC_SETS, GENERIC_PARALLELS, hasPhrase };
