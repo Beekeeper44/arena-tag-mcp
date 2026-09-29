@@ -73,6 +73,13 @@ h1 span{color:var(--go)}
 .loginbox input{padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text)}
 .spin{display:inline-block;width:12px;height:12px;border:2px solid var(--line);border-top-color:var(--go);border-radius:50%;animation:sp .8s linear infinite;vertical-align:-2px;margin-right:6px}
 @keyframes sp{to{transform:rotate(360deg)}}
+.btn.mic{display:inline-flex;align-items:center;gap:4px}
+.btn.mic[aria-pressed="true"]{background:var(--warn);border-color:var(--warn);color:#1a0f00;font-weight:700}
+.btn.mic[aria-pressed="true"]::after{content:"";width:8px;height:8px;border-radius:50%;background:#c00;margin-left:4px;animation:pulse 1s ease-in-out infinite}
+@keyframes pulse{50%{opacity:.25}}
+.voicenote{min-height:0;font-size:12px;color:var(--dim);margin-top:4px}
+.voicenote:empty{display:none}
+@media (prefers-reduced-motion: reduce){.btn.mic[aria-pressed="true"]::after{animation:none}}
 .savednote{min-height:18px;margin-top:6px;color:var(--go)}
 .foot{margin-top:28px}
 .saved{display:flex;flex-direction:column;gap:10px}
@@ -89,7 +96,7 @@ h1 span{color:var(--go)}
 /* summary */
 .summary{margin-top:18px;padding:14px;border:1px solid var(--line);border-radius:12px;background:var(--panel);display:grid;grid-template-columns:1fr auto;gap:12px 18px;align-items:center}
 @media (max-width:720px){.summary{grid-template-columns:1fr}}
-@media (max-width:560px){.ask{flex-wrap:wrap}.ask textarea{flex-basis:100%}.ask .btn{flex:1}}
+@media (max-width:560px){.ask{flex-wrap:wrap}.ask textarea{flex-basis:100%}.ask .btn{flex:1}.btn.mic{flex:0 0 auto}}
 .tagline{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
 .seg button{border:0;background:transparent;padding:7px 11px;cursor:pointer;color:var(--dim)}
@@ -200,11 +207,13 @@ dialog .acts{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}
       <div id="srcMsg" class="small" aria-live="polite"></div>
     </div>
     <form class="ask" id="form" autocomplete="off">
-      <textarea rows="1" id="input" aria-label="What should I tag?" placeholder="Tag all Wembanyama Prizm Ruby Wave PSA 10s between $200 and $1,000 as sd_wemby_grail"></textarea>
+      <textarea rows="1" id="input" aria-label="What should I tag?" placeholder="Type or use voice: tag wemby psa 10 over $200 as sd_wemby_grail"></textarea>
+      <button class="btn mic" type="button" id="micBtn" aria-pressed="false" title="Use your voice instead of typing">🎤<span class="mictxt"> Voice</span></button>
       <button class="btn" type="button" id="saveBtn">Save prompt</button>
       <button class="btn primary" type="submit">Find cards</button>
     </form>
     <div class="savednote small" id="saveNote" aria-live="polite"></div>
+    <div class="voicenote" id="voiceNote" aria-live="polite"></div>
 
     <div id="summary"></div>
     <div id="grid"></div>
@@ -696,6 +705,44 @@ const grow=()=>{const i=$("#input");i.style.height="auto";i.style.height=Math.mi
 $("#input").addEventListener("input",grow);
 $("#input").addEventListener("keydown",e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();$("#form").requestSubmit()}});
 new MutationObserver(grow);
+/* ---------- voice: talk into the request box (Chrome, Edge, Safari) ---------- */
+(()=>{
+  const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+  const btn=$("#micBtn"), note=$("#voiceNote"), box=$("#input");
+  if(!SR){ btn.title="Voice input needs Chrome, Edge or Safari"; btn.disabled=true; return; }
+  const NUM={zero:0,one:1,two:2,three:3,four:4,five:5,six:6,seven:7,eight:8,nine:9,ten:10};
+  // turn how people talk into how the box reads: "sd underscore wemby pack" -> "sd_wemby_pack", "p s a ten" -> "psa 10"
+  const tidy=t=>t
+    .replace(/\bhash ?tag\s+/gi,"#")
+    .replace(/\s*\bunderscore\b\s*/gi,"_")
+    .replace(/\bp\.? ?s\.? ?a\b/gi,"psa").replace(/\bb\.? ?g\.? ?s\b/gi,"bgs").replace(/\bs\.? ?g\.? ?c\b/gi,"sgc").replace(/\bc\.? ?g\.? ?c\b/gi,"cgc").replace(/\bc\.? ?s\.? ?g\b/gi,"csg")
+    .replace(/\b(psa|bgs|beckett|sgc|cgc|csg|grade)\s+(zero|one|two|three|four|five|six|seven|eight|nine|ten)(\s+point\s+five)?\b/gi,(m,g,n,h)=>`${g} ${NUM[n.toLowerCase()]}${h?".5":""}`)
+    .replace(/\b(\d+)\s+point\s+five\b/gi,"$1.5")
+    .replace(/\b(\d[\d,]*)\s*dollars?\b/gi,"$$$1")
+    .replace(/\s+([,.])/g,"$1").replace(/[.]\s*$/,"")
+    .replace(/\s{2,}/g," ");
+  let rec=null, listening=false, before="";
+  const ui=on=>{ listening=on; btn.setAttribute("aria-pressed",on); btn.querySelector(".mictxt").textContent=on?" Stop":" Voice"; note.textContent=on?"Listening… speak, then click Stop (or just pause). You can edit the text before searching.":""; };
+  const start=()=>{
+    rec=new SR(); rec.lang="en-US"; rec.interimResults=true; rec.continuous=true;
+    before=box.value.trim(); if(before) before+=" ";
+    rec.onresult=e=>{
+      let said=""; for(let i=0;i<e.results.length;i++) said+=e.results[i][0].transcript;
+      box.value=before+tidy(said.trim());
+      box.dispatchEvent(new Event("input",{bubbles:true}));
+    };
+    rec.onerror=e=>{
+      ui(false);
+      note.textContent=e.error==="not-allowed"||e.error==="service-not-allowed"
+        ?"The microphone is blocked. Allow it for this site (the lock or camera icon in the address bar), then try again."
+        :e.error==="no-speech"?"Didn't hear anything. Click Voice and try again.":`Voice stopped (${e.error}).`;
+    };
+    rec.onend=()=>{ if(listening){ ui(false); box.focus(); } };
+    try{ rec.start(); ui(true); }catch{ ui(false); }
+  };
+  btn.onclick=()=>{ if(listening){ rec&&rec.stop(); ui(false); box.focus(); } else start(); };
+})();
+
 /* keep the results in step with the request box while you type */
 let liveT;
 $("#input").addEventListener("input",()=>{

@@ -23,6 +23,10 @@ export type PostFilters = {
   only_untagged?: boolean; // keep cards with no current tag
   current_tag_exact?: string; // keep cards whose current tag is exactly this
   only_base?: boolean; // keep cards with no parallel
+  // several grading companies / grades in one request (e.g. "psa, beckett, sgc 10s")
+  graders?: string[]; // any of these companies (any grade unless a pair or number says otherwise)
+  grade_pairs?: [string, string][]; // exact company + grade, e.g. ["psa","10"]
+  grade_nums?: string[]; // these grades for the listed companies (or any company if none listed)
 };
 
 export type CardRow = {
@@ -262,6 +266,7 @@ async function queryOnce(filters: CardFilters, post: PostFilters = {}): Promise<
 
   if (post.only_untagged) rows = rows.filter((r) => !r.tag);
   if (post.only_base) rows = rows.filter((r) => !r.parallel_name);
+  if (post.graders?.length || post.grade_pairs?.length || post.grade_nums?.length) rows = rows.filter((r) => gradeMatches(r, post));
   // 4131's number filters are "contains"; keep exact matches only
   if (typeof filters.ac_number === "string") rows = rows.filter((r) => r.ac_number === filters.ac_number);
   if (typeof filters.cert_number === "string") rows = rows.filter((r) => r.cert_number === filters.cert_number);
@@ -303,4 +308,21 @@ export function summarize(rows: CardRow[], newTag?: string | null) {
       image: r.front_slab_picture_url,
     })),
   };
+}
+
+// "psa 10" -> company "psa", grade "10"
+export function gradeMatches(r: CardRow, post: PostFilters): boolean {
+  const gc = (r.grading_company || "").toLowerCase().replace(/\s+/g, "_");
+  const num = String(r.grade || "").trim().split(/\s+/).pop() || "";
+  const pairs = post.grade_pairs ?? [];
+  const graders = post.graders ?? [];
+  const nums = post.grade_nums ?? [];
+  if (pairs.some(([c, n]) => c === gc && n === num)) return true;
+  const pairCompanies = new Set(pairs.map(([c]) => c));
+  // companies named without their own grade
+  const loose = graders.filter((c) => !pairCompanies.has(c));
+  if (loose.includes(gc)) return nums.length ? nums.includes(num) : true;
+  // only grade numbers given ("10s"): any company
+  if (!graders.length && !pairs.length && nums.length) return nums.includes(num);
+  return false;
 }

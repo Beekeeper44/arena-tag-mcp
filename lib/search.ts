@@ -25,7 +25,7 @@ function namePhrases(text: string, used: string[]) {
   t = t.replace(/#[a-z0-9_-]+/g, " | ").replace(/\btag\s*[:=]\s*[a-z0-9_-]+/g, " | ").replace(/\b[a-z0-9]+(?:_[a-z0-9-]+)+\b/g, " | ");
   t = t.replace(/\$\s*[\d,.]+\s*k?\+?/g, " | ").replace(/\b\d+(?:\.\d+)?k?\b/g, " | ");
   for (const u of used.filter(Boolean).sort((a, b) => b.length - a.length)) t = t.replace(new RegExp("\\b" + esc(u) + "(?:s|es)?\\b", "g"), " | ");
-  t = t.replace(/\b(psa|bgs|sgc|cgc|beckett|arena[ _]club)\b/g, " | ");
+  t = t.replace(GRADER_RE, " | ");
   t = t.replace(/[,;/&+()]|\b(and|or|plus|with|vs)\b/g, " | ");
   const phrases: string[] = [];
   let cur: string[] = [];
@@ -39,7 +39,14 @@ function namePhrases(text: string, used: string[]) {
     cur.push(bare);
   }
   flush();
-  return [...new Set(phrases.map((p) => p.trim()).filter((p) => p.length >= 3))];
+  // one entry per name, ignoring case ("Cooper" -> Flagg and "flagg" are the same person)
+  const seen = new Set<string>();
+  return phrases.map((p) => p.trim()).filter((p) => {
+    const k = p.toLowerCase();
+    if (p.length < 3 || seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
 }
 
 
@@ -53,9 +60,23 @@ export async function smartSearch(text: string) {
   delete base.cert_number;
   const post: PostFilters = parsed.post_filters;
 
-  // graders the base reader doesn't know
-  const gm = (" " + ids.rest.toLowerCase() + " ").match(/\b(beckett|arena[ _]club)\s*(\d{1,2}(?:\.5)?)?s?\b/);
-  if (gm) { const gc = gm[1].replace(" ", "_"); base.grading_company = gc; if (gm[2]) base.grade = gc + " " + gm[2]; }
+  // grading companies and grades: any number of them ("psa beckett sgc 10s", "psa 10, bgs 9.5")
+  delete base.grading_company;
+  delete base.grade;
+  const g = readGrading(ids.rest);
+  const single = g.companies.length === 1 && g.pairs.length <= 1 && g.nums.length <= 1 && !(g.pairs.length && g.nums.length);
+  if (single) {
+    // one company (optionally one grade): let Metabase filter it (fastest)
+    const c = g.companies[0];
+    base.grading_company = c === "bgs" ? "b" : c; // "b" matches both bgs and beckett in 4131's contains filter
+    const n = g.pairs[0]?.[1] ?? g.nums[0];
+    if (n) post.grade_pairs = companyVariants(c).map((v) => [v, n] as [string, string]);
+    else post.graders = companyVariants(c);
+  } else if (g.companies.length || g.nums.length) {
+    post.graders = g.companies.flatMap(companyVariants);
+    post.grade_pairs = g.pairs.flatMap(([c, n]) => companyVariants(c).map((v) => [v, n] as [string, string]));
+    post.grade_nums = g.nums;
+  }
 
   // plain-word categories
   const low = " " + ids.rest.toLowerCase() + " ";
@@ -121,6 +142,10 @@ export async function smartSearch(text: string) {
   if (lab("set").length) display.set_name = lab("set").length === 1 ? lab("set")[0] : lab("set");
   if (lab("parallel").length) display.parallel_name = lab("parallel").length === 1 ? lab("parallel")[0] : lab("parallel");
   if (contains.length) (display as Record<string, unknown>).contains = contains.join(" ");
+  if (g.companies.length) display.grading_company = (g.companies.length === 1 ? g.companies[0] : g.companies) as unknown as string;
+  const gradeLabels = [...g.pairs.map(([c, n]) => `${c} ${n}`), ...g.nums.map((n) => (g.companies.length ? n : `any ${n}`))];
+  if (gradeLabels.length) display.grade = gradeLabels.length === 1 ? gradeLabels[0] : gradeLabels;
+  else delete display.grade;
 
   // the exact searches to re-run before writing
   const P = byType("player").length ? byType("player").map((g) => g.field) : [null];
@@ -129,6 +154,46 @@ export async function smartSearch(text: string) {
   const queries: CardFilters[] = [];
   for (const a of P) for (const b of S) for (const c of R) queries.push({ ...base, ...(a ? { player_name: a } : {}), ...(b ? { set_name: b } : {}), ...(c ? { parallel_name: c } : {}) });
   return done(t0, parsed, display, post, queries.slice(0, 60), rows, missing);
+}
+
+// ---- grading ----
+const GRADERS: [RegExp, string][] = [
+  [/\bpsa\b/, "psa"], [/\bbgs\b/, "bgs"], [/\bbeckett\b/, "beckett"], [/\bsgc\b/, "sgc"], [/\bcgc\b/, "cgc"],
+  [/\bcsg\b/, "csg"], [/\bhga\b/, "hga"], [/\bisa\b/, "isa"], [/\barena[ _]club\b/, "arena_club"],
+];
+const GRADER_RE = /\b(psa|bgs|beckett|sgc|cgc|csg|hga|isa|arena[ _]club)\b/g;
+// BGS cards are stored as "beckett" in 4131; accept either spelling
+const companyVariants = (c: string) => (c === "bgs" || c === "beckett" ? ["beckett", "bgs"] : [c]);
+
+function readGrading(text: string) {
+  const t = " " + text.toLowerCase().replace(/[$][\s\d,.]+k?/g, " ") + " ";
+  const companies: string[] = [];
+  for (const [re, c] of GRADERS) if (re.test(t) && !companies.includes(c)) companies.push(c);
+  // company immediately followed by a grade: "psa 10", "beckett 9.5", "sgc 10s"
+  const pairs: [string, string][] = [];
+  const pairRe = /\b(psa|bgs|beckett|sgc|cgc|csg|hga|isa|arena[ _]club)\s*(10|[1-9](?:\.5)?)s?\b/g;
+  let m: RegExpExecArray | null;
+  const paired = new Set<string>();
+  while ((m = pairRe.exec(t))) { const c = m[1].replace(" ", "_"); pairs.push([c, m[2]]); paired.add(m.index + ":" + m[0].length); }
+  // grades on their own: "10s", "grade 10", "9.5s", or a grade after a list of companies ("psa and sgc 10")
+  const nums: string[] = [];
+  const stripped = t.replace(pairRe, " ");
+  for (const n of stripped.match(/\b(?:grade\s*)?(10|[1-9]\.5|[1-9])s?\b(?!\s*(?:k|\d))/g) ?? []) {
+    const v = n.replace(/grade\s*/, "").replace(/s$/, "");
+    // ignore small numbers that are clearly counts ("top 5", "2 cards")
+    if (!/grade|s$/.test(n) && !companies.length) continue;
+    if (!nums.includes(v)) nums.push(v);
+  }
+  // "psa 10 and sgc" -> psa 10 + any sgc; "psa sgc 10" -> the 10 belongs to both
+  if (pairs.length && !nums.length) {
+    const lastPair = pairs[pairs.length - 1];
+    const loose = companies.filter((c) => !pairs.some(([pc]) => pc === c));
+    // a lone grade right after the last company applies to the companies listed just before it
+    if (loose.length && pairs.length === 1 && t.indexOf(lastPair[0].replace("_", " ")) > Math.max(...loose.map((c) => t.indexOf(c.replace("_", " "))))) {
+      for (const c of loose) pairs.push([c, lastPair[1]]);
+    }
+  }
+  return { companies, pairs, nums };
 }
 
 type SegType = "player" | "set" | "parallel" | "none";
