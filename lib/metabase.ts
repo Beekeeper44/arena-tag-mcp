@@ -53,7 +53,7 @@ export type CardRow = {
   po_number: string | null;
 };
 
-type TemplateTag = { name: string; type: string };
+type TemplateTag = { name: string; type: string; id?: string; ptype?: string };
 let tagCache: { at: number; tags: Record<string, TemplateTag> } | null = null;
 
 async function mb(path: string, init: RequestInit = {}) {
@@ -74,17 +74,25 @@ async function getTemplateTags(): Promise<Record<string, TemplateTag>> {
   const tags: Record<string, TemplateTag> = {};
   const addTags = (obj: unknown) => {
     if (!obj || typeof obj !== "object") return;
-    for (const [k, v] of Object.entries(obj as Record<string, { name?: string; type?: string }>)) {
+    for (const [k, v] of Object.entries(obj as Record<string, { name?: string; type?: string; id?: string }>)) {
       const name = v?.name || k;
-      tags[name] = { name, type: v?.type === "number" ? "number" : "text" };
+      tags[name] = { ...(tags[name] || {}), name, type: v?.type === "number" ? "number" : "text", id: tags[name]?.id || v?.id };
     }
   };
   addTags(card?.dataset_query?.native?.["template-tags"]);
   for (const st of card?.dataset_query?.stages ?? []) addTags(st?.["template-tags"]);
+  // the card's own parameters carry the id Metabase expects on each query parameter
   for (const p of card?.parameters ?? []) {
     const t = p?.target;
     const name = Array.isArray(t) && Array.isArray(t[1]) && t[1][0] === "template-tag" ? t[1][1] : null;
-    if (name && !tags[name]) tags[name] = { name, type: String(p?.type || "").startsWith("number") ? "number" : "text" };
+    if (!name) continue;
+    const prev = tags[name];
+    tags[name] = {
+      name,
+      type: prev?.type ?? (String(p?.type || "").startsWith("number") ? "number" : "text"),
+      id: p?.id || prev?.id,
+      ptype: p?.type,
+    };
   }
   tagCache = { at: Date.now(), tags };
   return tags;
@@ -97,10 +105,12 @@ function buildParameters(filters: CardFilters, tags: Record<string, TemplateTag>
   for (const [key, raw] of Object.entries(filters)) {
     if (raw === undefined || raw === null || raw === "") continue;
     const tt = tags[key];
-    if (!tt) { local[key] = raw; continue; }
+    // no such filter, or Metabase didn't give us its id: filter these cards here instead
+    if (!tt || !tt.id) { local[key] = raw; continue; }
     const isNumber = tt.type === "number";
     params.push({
-      type: isNumber ? "number/=" : "category",
+      id: tt.id,
+      type: tt.ptype || (isNumber ? "number/=" : "category"),
       target: ["variable", ["template-tag", key]],
       value: isNumber ? [Number(raw)] : [String(raw)],
     });
