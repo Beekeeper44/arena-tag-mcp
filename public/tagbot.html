@@ -95,7 +95,6 @@ h1 span{color:var(--go)}
 .seg button{border:0;background:transparent;padding:7px 11px;cursor:pointer;color:var(--dim)}
 .seg button[aria-pressed="true"]{background:var(--go);color:var(--go-ink);font-weight:700}
 .tagfield{display:flex;align-items:center;border:1.5px solid var(--go);border-radius:8px;padding:0 10px;background:var(--bg)}
-.tagfield::before{content:"#";color:var(--go);font-weight:800;margin-right:2px}
 .tagfield input{border:0;background:transparent;padding:8px 0;font-weight:700;font-size:16px;width:min(260px,52vw);outline:none}
 .chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
 .chip{border:1px solid var(--line);background:var(--panel2);border-radius:999px;padding:2px 9px;font-size:12px}
@@ -382,7 +381,7 @@ const when=t=>t?new Date(t).toLocaleString([], {month:"short",day:"numeric",hour
 async function renderHistory(){
   try{
     const runs=await api("runs");
-    $("#history").innerHTML=runs.length?`<table><tr><th>run</th><th>result</th><th>action</th><th>cards</th><th>by</th><th>when</th></tr>${runs.map(r=>`<tr><td>${esc(r.id)}</td><td>${esc(r.status.replace(/_/g," "))}</td><td>${esc(r.action==="set"?"#"+r.tag:r.action==="clear"?"remove tag":"undo "+(r.undo_of||""))}</td><td>${r.staged_count??r.preview_count}</td><td>${esc(r.approved_by||r.requested_by)}</td><td>${when(r.finished_at||r.created_at)}</td></tr>`).join("")}</table>`:`<div class="dim small" style="padding:10px 14px">No runs yet.</div>`;
+    $("#history").innerHTML=runs.length?`<table><tr><th>run</th><th>result</th><th>action</th><th>cards</th><th>by</th><th>when</th></tr>${runs.map(r=>`<tr><td>${esc(r.id)}</td><td>${esc(r.status.replace(/_/g," "))}</td><td>${esc(r.action==="set"?r.tag:r.action==="clear"?"remove tag":"undo "+(r.undo_of||""))}</td><td>${r.staged_count??r.preview_count}</td><td>${esc(r.approved_by||r.requested_by)}</td><td>${when(r.finished_at||r.created_at)}</td></tr>`).join("")}</table>`:`<div class="dim small" style="padding:10px 14px">No runs yet.</div>`;
   }catch{}
 }
 
@@ -459,7 +458,7 @@ function resultHeader(){
   if(S.undone){ head=`↺ Undone — ${n} cards are back to their previous tags`; sub="Each card below shows the tag it has now."; }
   else if(S.dry){ head=`Dry run — ${n} cards would ${S.action==="clear"?"have their tag removed":"be tagged #"+esc(S.tag)}`; sub="Nothing was written. The cards below show what they would look like."; }
   else if(S.action==="clear"){ head=`✓ Tag removed from ${n} cards`; sub="These cards now have no tag."; }
-  else { head=`✓ ${n} cards tagged #${esc(S.tag)}`; sub="Each card below shows its tag now."; }
+  else { head=`✓ ${n} cards tagged ${esc(S.tag)}`; sub="Each card below shows its tag now."; }
   return `<div class="summary result">
     <div><div class="rh">${head}</div><div class="dim small">${sub}</div></div>
     <div class="totals">${others>0?`<button class="btn link" type="button" id="showAll">${S.showAll?"Show only changed cards":`Also show ${others} not included`}</button>`:""}</div>
@@ -475,7 +474,7 @@ function tile(r){
   else if(S.phase==="done"&&S.done.some(d=>d.item_id===r.item_id)){
     const was=S.prevAll.get(r.item_id);
     const now=S.dry?(S.action==="clear"?null:S.tag):r.tag;
-    const nowHtml=now?`<span class="pill new">#${esc(now)}</span>`:`<span class="pill none">no tag</span>`;
+    const nowHtml=now?`<span class="pill new">${esc(now)}</span>`:`<span class="pill none">no tag</span>`;
     const wasHtml=S.undone?"":`<span class="dim">was</span> ${was?`<span class="pill old">${esc(was)}</span>`:`<span class="dim">no tag</span>`}`;
     change=`<div class="nowline"><span class="dim">${S.dry?"would be":"now"}</span> ${nowHtml}</div>${wasHtml?`<div class="nowline">${wasHtml}</div>`:""}`;
   }
@@ -533,7 +532,7 @@ function renderBar(n,replacing){
     cb.textContent=S.action==="set"?`Confirm tags (${n})`:`Remove tags (${n})`;
     cb.className="btn big "+(S.action==="set"?"primary":"danger");
     msg.innerHTML=bad?`<span style="color:var(--warn)">Enter a tag: lowercase letters, numbers and underscores.</span>`:n>CAP?`<span style="color:var(--warn)">${n.toLocaleString()} cards is over the ${CAP.toLocaleString()}-card limit. Deselect some or narrow the request.</span>`:
-      `<b>${n}</b> cards will ${S.action==="set"?`get <b>#${esc(S.tag)}</b>`:"have their tag removed"}${replacing?` · ${replacing} replace an existing tag`:""}`;
+      `<b>${n}</b> cards will ${S.action==="set"?`get the tag <b>${esc(S.tag)}</b>`:"have their tag removed"}${replacing?` · ${replacing} replace an existing tag`:""}`;
   }
 }
 function bindSummary(){
@@ -571,7 +570,7 @@ $("#confirmBtn").onclick=async()=>{
   let ok;
   if(S.action==="set"){
     const rep=sel.filter(r=>r.tag&&r.tag!==S.tag).length;
-    ok=await ask({title:`Tag ${sel.length} cards as #${S.tag}?`,
+    ok=await ask({title:`Tag ${sel.length} cards as ${S.tag}?`,
       body:`${dryNote}${rep?`${rep} of them currently have another tag that will be replaced:`+tagCounts(sel.filter(r=>r.tag&&r.tag!==S.tag))+"<br>":""}You can undo this afterward.`,
       yes:dry?"Run dry run":"Yes, tag them"});
   }else{
@@ -599,7 +598,7 @@ async function run(sel,dry){
   sel.forEach(r=>{ if(written.has(r.item_id)){ S.prev.set(r.item_id,r.tag); if(!isDry) r.tag=target; } });
   S.phase="done"; S.runId=res.run_id; S.dry=isDry; S.done=sel.filter(r=>written.has(r.item_id)); render();
   renderHistory();
-  const verb=S.action==="set"?`tagged #${esc(S.tag)}`:"cleared";
+  const verb=S.action==="set"?`tagged ${esc(S.tag)}`:"cleared";
   const failNote=(res.failed||res.mismatch)?` <span style="color:var(--warn)">${(res.failed||0)+(res.mismatch||0)} failed — see Recent runs (${esc(res.run_id)}).</span>`:"";
   const skipNote=res.skipped_no_longer_matching?` <span class="dim">${res.skipped_no_longer_matching} no longer matched and were skipped.</span>`:"";
   $("#barmsg").innerHTML=isDry?`<b>Dry run done.</b> ${S.done.length} cards would be ${verb}. Nothing was written.${skipNote}`:
@@ -607,7 +606,7 @@ async function run(sel,dry){
   const u=$("#undoBtn"); if(u) u.onclick=async()=>{
     const restoring=S.done.map(r=>({tag:S.prev.get(r.item_id)}));
     const ok=await ask({title:`Undo ${S.runId}?`,
-      body:`This puts ${S.done.length} cards back to the tag they had before:${tagCounts(restoring)}<br>${S.action==="set"?`#${esc(S.tag)} will be removed from them.`:"Their removed tags will be restored."}`,
+      body:`This puts ${S.done.length} cards back to the tag they had before:${tagCounts(restoring)}<br>${S.action==="set"?`${esc(S.tag)} will be removed from them.`:"Their removed tags will be restored."}`,
       yes:"Yes, undo", danger:true});
     if(ok) undo();
   };
