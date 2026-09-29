@@ -22,6 +22,7 @@ export type CardFilters = {
 export type PostFilters = {
   only_untagged?: boolean; // keep cards with no current tag
   current_tag_exact?: string; // keep cards whose current tag is exactly this
+  only_base?: boolean; // keep cards with no parallel
 };
 
 export type CardRow = {
@@ -40,6 +41,16 @@ export type CardRow = {
   item_status: string | null;
   front_slab_picture_url: string | null;
   card_url: string | null;
+  parallel_total: string | null;
+  ev_date: string | null;
+  ev_age_days: number | null;
+  order_number: string | null;
+  times_sold_back: number | null;
+  storage_bin_id: string | null;
+  storage_bin_slot: string | null;
+  purchase_cost: number | null;
+  purchase_location: string | null;
+  po_number: string | null;
 };
 
 type TemplateTag = { name: string; type: string };
@@ -111,6 +122,16 @@ function toRow(obj: Record<string, unknown>): CardRow {
     item_status: s(o.ITEM_STATUS),
     front_slab_picture_url: s(o.FRONT_SLAB_PICTURE_URL),
     card_url: s(o.CARD_URL),
+    parallel_total: s(o.PARALLEL_TOTAL),
+    ev_date: s(o.ESTIMATED_VALUE_DATE),
+    ev_age_days: n(o.EV_AGE_DAYS),
+    order_number: s(o.NUMBER),
+    times_sold_back: n(o.TIMES_SOLD_BACK),
+    storage_bin_id: s(o.STORAGE_BIN_ID),
+    storage_bin_slot: s(o.STORAGE_BIN_SLOT),
+    purchase_cost: n(o.PURCHASE_COST),
+    purchase_location: s(o.PURCHASE_LOCATION),
+    po_number: s(o.PO_NUMBER),
   };
 }
 
@@ -193,6 +214,7 @@ async function queryOnce(filters: CardFilters, post: PostFilters = {}): Promise<
   let rows = data.map(toRow).filter((r) => r.item_id);
 
   if (post.only_untagged) rows = rows.filter((r) => !r.tag);
+  if (post.only_base) rows = rows.filter((r) => !r.parallel_name);
   if (post.current_tag_exact) rows = rows.filter((r) => r.tag === post.current_tag_exact);
   return rows;
 }

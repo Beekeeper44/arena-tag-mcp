@@ -196,6 +196,7 @@ async function executeWrites(
   );
   const tally = (s: string) => statuses.filter((x) => x === s).length;
   return {
+    written_ids: items.filter((_, i) => statuses[i] === okStatus).map((x) => x.item_id),
     succeeded: tally(okStatus),
     failed: tally("failed"),
     mismatch: tally("mismatch"),
@@ -206,11 +207,11 @@ async function executeWrites(
   };
 }
 
-export async function goLive(input: { run_id: string; confirm: boolean; approved_by: string }) {
+export async function goLive(input: { run_id: string; confirm: boolean; approved_by: string; dry_run?: boolean }) {
   if (input.confirm !== true) throw new Error("confirm must be true.");
   const run = await loadRun(input.run_id);
   if (new Date(run.expires_at) < new Date()) throw new Error("Staged run expired. Run a new preview.");
-  const dry = config.dryRun();
+  const dry = config.dryRun() || input.dry_run === true;
 
   // Atomic claim: only one caller can move staged -> executing.
   const [claimed] = await q(
@@ -310,4 +311,57 @@ export async function listRuns(limit = 20) {
      FROM tag_runs ORDER BY created_at DESC LIMIT $1`,
     [Math.min(Math.max(limit, 1), 100)]
   );
+}
+
+// ---------- Web app: one confirmed action on an exact, user-picked set of cards ----------
+// The screen shows the matches, the user deselects what they don't want and confirms once.
+// Recorded as a normal run (staged + approved by the same person) so the audit trail matches.
+export async function runSelection(input: {
+  filters: CardFilters;
+  post_filters?: PostFilters;
+  action: "set" | "clear";
+  tag?: string | null;
+  mode?: "overwrite" | "skip_tagged";
+  item_ids: string[];
+  dry_run?: boolean;
+  user: string;
+}) {
+  const action = input.action;
+  const tag = action === "clear" ? null : (input.tag ?? "").trim();
+  if (action === "set") {
+    const err = validateTag(tag as string);
+    if (err) throw new Error(err);
+  }
+  const wanted = [...new Set(input.item_ids)];
+  if (!wanted.length) throw new Error("No cards selected.");
+  if (wanted.length > config.maxItemsPerRun()) throw new Error(`${wanted.length} cards is over the ${config.maxItemsPerRun()}-card limit.`);
+
+  // Re-check against live data: only cards that still match the request (and still need changing) are written.
+  const rows = applyMode(await queryCards(input.filters, input.post_filters ?? {}), action, tag, input.mode ?? "overwrite");
+  const byId = new Map(rows.map((r) => [r.item_id, r]));
+  const chosen = wanted.map((id) => byId.get(id)).filter((r): r is CardRow => !!r);
+  const dropped = wanted.length - chosen.length;
+  if (!chosen.length) throw new Error("None of the selected cards still match. Search again.");
+
+  const id = newId();
+  await q(
+    `INSERT INTO tag_runs (id, status, action, tag, mode, filters, post_filters, requested_by, preview_count, staged_by, staged_at, staged_count, expires_at)
+     VALUES ($1,'staged',$2,$3,$4,$5,$6,$7,$8,$7,now(),$8,$9)`,
+    [id, action, tag, input.mode ?? "overwrite", JSON.stringify(input.filters), JSON.stringify(input.post_filters ?? {}), input.user, chosen.length, hoursFromNow(1)]
+  );
+  await q(
+    `INSERT INTO tag_run_items (run_id, item_id, previous_tag, new_tag, label, ev)
+     SELECT $1, t.item_id, t.prev, $2, t.label, t.ev
+     FROM unnest($3::text[], $4::text[], $5::text[], $6::numeric[]) AS t(item_id, prev, label, ev)`,
+    [
+      id,
+      tag,
+      chosen.map((r) => r.item_id),
+      chosen.map((r) => r.tag),
+      chosen.map((r) => [r.ac_number, r.set_name, r.player_name, r.parallel_name, r.grade].filter(Boolean).join(" · ")),
+      chosen.map((r) => r.estimated_value),
+    ]
+  );
+  const result = await goLive({ run_id: id, confirm: true, approved_by: input.user, dry_run: input.dry_run });
+  return { ...result, skipped_no_longer_matching: dropped, previous: Object.fromEntries(chosen.map((r) => [r.item_id, r.tag])) };
 }

@@ -58,6 +58,14 @@ async function ensureSchema() {
           updated_at    timestamptz NOT NULL DEFAULT now(),
           PRIMARY KEY (run_id, item_id)
         )`);
+      await s.query(`
+        CREATE TABLE IF NOT EXISTS saved_prompts (
+          id          text PRIMARY KEY,
+          name        text NOT NULL,
+          text        text NOT NULL,
+          created_by  text NOT NULL,
+          created_at  timestamptz NOT NULL DEFAULT now()
+        )`);
     })().catch((e) => {
       ready = null;
       throw e;
