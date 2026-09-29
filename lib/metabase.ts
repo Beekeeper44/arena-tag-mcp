@@ -64,26 +64,40 @@ async function mb(path: string, init: RequestInit = {}) {
   return res;
 }
 
+// Which {{filters}} does the saved question have? Metabase reports them in different places depending on
+// version, so read all of them: native template-tags, per-stage template-tags, and the card's parameters.
 async function getTemplateTags(): Promise<Record<string, TemplateTag>> {
-  if (tagCache && Date.now() - tagCache.at < 10 * 60 * 1000) return tagCache.tags;
+  if (tagCache && Date.now() - tagCache.at < 60 * 1000) return tagCache.tags;
   const res = await mb(`/api/card/${config.metabaseCardId()}`);
   if (!res.ok) throw new Error(`Metabase card fetch failed: ${res.status} ${await res.text()}`);
   const card = await res.json();
-  const tags = (card?.dataset_query?.native?.["template-tags"] ?? {}) as Record<string, TemplateTag>;
+  const tags: Record<string, TemplateTag> = {};
+  const addTags = (obj: unknown) => {
+    if (!obj || typeof obj !== "object") return;
+    for (const [k, v] of Object.entries(obj as Record<string, { name?: string; type?: string }>)) {
+      const name = v?.name || k;
+      tags[name] = { name, type: v?.type === "number" ? "number" : "text" };
+    }
+  };
+  addTags(card?.dataset_query?.native?.["template-tags"]);
+  for (const st of card?.dataset_query?.stages ?? []) addTags(st?.["template-tags"]);
+  for (const p of card?.parameters ?? []) {
+    const t = p?.target;
+    const name = Array.isArray(t) && Array.isArray(t[1]) && t[1][0] === "template-tag" ? t[1][1] : null;
+    if (name && !tags[name]) tags[name] = { name, type: String(p?.type || "").startsWith("number") ? "number" : "text" };
+  }
   tagCache = { at: Date.now(), tags };
   return tags;
 }
 
+// Filters the question has are sent to Metabase; any it doesn't have are applied here to the returned cards.
 function buildParameters(filters: CardFilters, tags: Record<string, TemplateTag>) {
   const params: unknown[] = [];
-  const unsupported: string[] = [];
+  const local: Record<string, unknown> = {};
   for (const [key, raw] of Object.entries(filters)) {
     if (raw === undefined || raw === null || raw === "") continue;
     const tt = tags[key];
-    if (!tt) {
-      unsupported.push(key);
-      continue;
-    }
+    if (!tt) { local[key] = raw; continue; }
     const isNumber = tt.type === "number";
     params.push({
       type: isNumber ? "number/=" : "category",
@@ -91,10 +105,33 @@ function buildParameters(filters: CardFilters, tags: Record<string, TemplateTag>
       value: isNumber ? [Number(raw)] : [String(raw)],
     });
   }
-  if (unsupported.length) {
-    throw new Error(`Question ${config.metabaseCardId()} has no filter for: ${unsupported.join(", ")}`);
-  }
-  return params;
+  return { params, local };
+}
+
+const likeText = (v: unknown, q: unknown) => {
+  if (v === null || v === undefined) return false;
+  const s = String(v).toLowerCase();
+  let i = 0;
+  for (const part of String(q).toLowerCase().split("%")) { const j = s.indexOf(part, i); if (j < 0) return false; i = j + part.length; }
+  return true;
+};
+function applyLocal(rows: CardRow[], local: Record<string, unknown>): CardRow[] {
+  const n = (v: unknown) => Number(v);
+  const text: Record<string, keyof CardRow> = {
+    sport: "sport", tag: "tag", set_name: "set_name", player_name: "player_name", parallel_name: "parallel_name",
+    grading_company: "grading_company", grade: "grade", cert_number: "cert_number", ac_number: "ac_number",
+  };
+  return rows.filter((r) =>
+    Object.entries(local).every(([k, v]) => {
+      if (k === "min_estimated_value") return (r.estimated_value ?? 0) >= n(v);
+      if (k === "max_estimated_value") return (r.estimated_value ?? 0) <= n(v);
+      if (k === "min_ev_age_days") return r.ev_age_days != null && r.ev_age_days >= n(v);
+      if (k === "max_ev_age_days") return r.ev_age_days != null && r.ev_age_days <= n(v);
+      if (k === "min_times_sold_back") return (r.times_sold_back ?? 0) >= n(v);
+      const field = text[k];
+      return field ? likeText(r[field], v) : true;
+    })
+  );
 }
 
 function normKey(k: string) {
@@ -188,7 +225,7 @@ export async function queryCards(filters: CardFilters, post: PostFilters = {}): 
 // One call to question 4131. Uses the JSON export endpoint so results are not capped at 2,000 rows.
 async function queryOnce(filters: CardFilters, post: PostFilters = {}): Promise<CardRow[]> {
   const tags = await getTemplateTags();
-  const parameters = buildParameters(filters, tags);
+  const { params: parameters, local } = buildParameters(filters, tags);
   const path = `/api/card/${config.metabaseCardId()}/query/json`;
 
   // Newer Metabase takes a JSON body; older versions take form fields. Try JSON, then form.
@@ -211,7 +248,7 @@ async function queryOnce(filters: CardFilters, post: PostFilters = {}): Promise<
   if (!Array.isArray(data)) {
     throw new Error(`Unexpected Metabase response: ${JSON.stringify(data).slice(0, 500)}`);
   }
-  let rows = data.map(toRow).filter((r) => r.item_id);
+  let rows = applyLocal(data.map(toRow).filter((r) => r.item_id), local);
 
   if (post.only_untagged) rows = rows.filter((r) => !r.tag);
   if (post.only_base) rows = rows.filter((r) => !r.parallel_name);
