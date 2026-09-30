@@ -79,7 +79,7 @@ export async function POST(req: Request, ctx: Ctx) {
             insert: r.insert, parallel_total: r.parallel_total, status: r.item_status,
             ev_date: r.ev_date, ev_age_days: r.ev_age_days, order_number: r.order_number,
             times_sold_back: r.times_sold_back, bin: r.storage_bin_id, slot: r.storage_bin_slot,
-            purchase_cost: r.purchase_cost, purchase_location: r.purchase_location, po_number: r.po_number,
+            purchase_cost: r.purchase_cost, purchase_location: r.purchase_location, po_number: r.po_number, set_number: r.set_number,
           })),
         });
       }

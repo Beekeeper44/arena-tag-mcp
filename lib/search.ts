@@ -15,7 +15,13 @@ const SPORTS: [string, string][] = [
 const EXTRA_STOP = new Set(("this these those that here there some any one ones two three four five me us our ours your his her their " +
   "is it its be been being was were do does did get got go put make set sets list lists everything anything nothing " +
   "graded ungraded slabbed slabs slab card cards item items number numbers ac cert certs").split(" "));
-const isStop = (w: string) => STOP.has(w) || STOP.has(w.replace(/s$/, "")) || EXTRA_STOP.has(w);
+// words that are set / brand / parallel vocabulary: keep them so "topps update" or "rainbow foil" can be matched
+const CATALOG_WORDS = new Set(("topps panini prizm select optic donruss bowman chrome upper deck fleer update finest stadium club heritage " +
+  "mosaic contenders immaculate flawless national treasures score leaf metal universe hoops sp spx fleer ultra " +
+  "refractor refractors silver gold blue red green orange purple black pink wave ruby shimmer holo holos foil rainbow " +
+  "reverse illustration rare edition first evolving skies crown zenith evolutions").split(" "));
+const isStop = (w: string) =>
+  !CATALOG_WORDS.has(w) && !CATALOG_WORDS.has(w.replace(/s$/, "")) && (STOP.has(w) || STOP.has(w.replace(/s$/, "")) || EXTRA_STOP.has(w));
 
 const esc = (x: string) => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
@@ -30,11 +36,16 @@ function namePhrases(text: string, used: string[]) {
   const phrases: string[] = [];
   let cur: string[] = [];
   const flush = () => { if (cur.length) { phrases.push(cur.join(" ")); cur = []; } };
-  for (const w of t.split(/\s+/)) {
+  const toks = t.split(/\s+/);
+  const bareOf = (x: string | undefined) => (x ?? "").replace(/[^a-z0-9.é'-]/g, "").replace(/'s$/, "");
+  for (let ti = 0; ti < toks.length; ti++) {
+    const w = toks[ti];
     if (!w || w === "|") { flush(); continue; }
     const bare = w.replace(/[^a-z0-9.é'-]/g, "").replace(/'s$/, "");
     if (!bare) { flush(); continue; }
-    if (ALIAS[bare]) { flush(); phrases.push(ALIAS[bare]); continue; }
+    const nextBare = bareOf(toks[ti + 1]);
+    const aliasLast = (ALIAS[bare] || "").toLowerCase().split(" ").pop();
+    if (ALIAS[bare] && nextBare !== aliasLast && !cur.length) { flush(); phrases.push(ALIAS[bare]); continue; }
     if (isStop(bare) || bare.length < 2) { flush(); continue; }
     cur.push(bare);
   }
@@ -52,13 +63,15 @@ function namePhrases(text: string, used: string[]) {
 
 export async function smartSearch(text: string) {
   const t0 = Date.now();
-  const ids = extractIds(text);
+  const cn = extractCardNumbers(text);
+  const ids = extractIds(cn.rest);
   const parsed = parseRequest(ids.rest, buildLexiconFromRows([]));
   const base: CardFilters = { ...(parsed.filters as CardFilters) };
   delete base.player_name;
   delete base.ac_number;
   delete base.cert_number;
   const post: PostFilters = parsed.post_filters;
+  if (cn.numbers.length) base.set_number = cn.numbers.length === 1 ? cn.numbers[0] : cn.numbers;
 
   // grading companies and grades: any number of them ("psa beckett sgc 10s", "psa 10, bgs 9.5")
   delete base.grading_company;
@@ -109,7 +122,14 @@ export async function smartSearch(text: string) {
   }
 
   const probe = makeProber(base, post);
-  const segs = (await Promise.all(phrases.map((ph) => segment(ph.split(" "), probe)))).flat();
+  const segs = (await Promise.all(phrases.map((ph) => segment(ph.split(" "), probe, base)))).flat();
+  // a full name ("shohei ohtani") means that player's own cards, not shared ones ("Shohei Ohtani/Ichiro Suzuki");
+  // type just the last name ("ohtani") to include cards he shares with other players
+  for (const g of segs) {
+    if (g.type !== "player" || !g.text.includes(" ")) continue;
+    const exact = g.rows.filter((r) => normName(r.player_name) === normName(g.text));
+    if (exact.length) { g.rows = exact; g.exact = true; }
+  }
   const found = segs.filter((g) => g.type !== "none");
   const unknown = segs.filter((g) => g.type === "none").map((g) => g.text);
 
@@ -147,6 +167,9 @@ export async function smartSearch(text: string) {
   if (gradeLabels.length) display.grade = gradeLabels.length === 1 ? gradeLabels[0] : gradeLabels;
   else delete display.grade;
 
+  if (yearOnly(base) && byType("set").length) display.set_name = byType("set").map((g) => g.field.replace("%", " ")).join(" / ");
+  if (base.set_number) (display as Record<string, unknown>).set_number = base.set_number;
+
   // the exact searches to re-run before writing
   const P = byType("player").length ? byType("player").map((g) => g.field) : [null];
   const S = byType("set").length ? byType("set").map((g) => g.field) : [null];
@@ -154,6 +177,21 @@ export async function smartSearch(text: string) {
   const queries: CardFilters[] = [];
   for (const a of P) for (const b of S) for (const c of R) queries.push({ ...base, ...(a ? { player_name: a } : {}), ...(b ? { set_name: b } : {}), ...(c ? { parallel_name: c } : {}) });
   return done(t0, parsed, display, post, queries.slice(0, 60), rows, missing);
+}
+
+// ---- card numbers on the card: "#US189", "us189", "card #189", "no. 12", "LITM-1" ----
+function extractCardNumbers(text: string) {
+  const numbers: string[] = [];
+  let t = " " + text + " ";
+  const keep = (n: string) => { const v = n.replace(/^#/, "").toUpperCase(); if (!numbers.includes(v)) numbers.push(v); return " "; };
+  // labeled: "card #189", "card number 189", "no. 189", "number US189"
+  t = t.replace(/\b(?:card\s*(?:#|no\.?|number)|no\.|number)\s*#?\s*([a-z]{0,6}-?\d{1,4}[a-z]{0,2})\b/gi, (_m, n) => keep(n));
+  // "#US189" / "#189" (a # followed by letters+digits with no underscore is a card number, not a tag)
+  t = t.replace(/(^|\s)#([a-z]{0,6}-?\d{1,4}[a-z]{0,2})(?=\s|$|[,.])/gi, (_m, pre, n) => pre + keep(n));
+  // bare letters+digits: "us189", "litm-1", "tc12" (not graders like "psa10", not tags, not money)
+  t = t.replace(/(^|[\s,(])([a-z]{1,6}-?\d{1,4}[a-z]{0,2})(?=[\s,.)]|$)/gi, (m, pre, n) =>
+    /^(psa|bgs|sgc|cgc|csg|hga|isa|beckett)-?\d/i.test(n) ? m : pre + keep(n));
+  return { numbers, rest: t.trim() };
 }
 
 // ---- grading ----
@@ -197,8 +235,13 @@ function readGrading(text: string) {
 }
 
 type SegType = "player" | "set" | "parallel" | "none";
-type Seg = { type: SegType; text: string; field: string; rows: CardRow[] };
+type Seg = { type: SegType; text: string; field: string; rows: CardRow[]; exact?: boolean };
+const normName = (v: unknown) => String(v ?? "").toLowerCase().replace(/[.,']/g, "").replace(/\b(jr|sr|ii|iii|iv)\b/g, "").replace(/\s+/g, " ").trim();
 type Prober = (type: Exclude<SegType, "none">, text: string) => Promise<CardRow[]>;
+
+const yearOnly = (b: CardFilters) => typeof b.set_name === "string" && /^(19|20)\d\d$/.test(b.set_name);
+// value actually sent for a phrase: sets get the year in front when the request only gave a year
+export const fieldFor = (base: CardFilters, type: string, text: string) => (type === "set" && yearOnly(base) ? `${base.set_name}%${text}` : text);
 
 function makeProber(base: CardFilters, post: PostFilters): Prober {
   const cache = new Map<string, Promise<CardRow[]>>();
@@ -206,9 +249,9 @@ function makeProber(base: CardFilters, post: PostFilters): Prober {
     const key = type + "|" + text;
     if (!cache.has(key)) {
       const field = type === "player" ? "player_name" : type === "set" ? "set_name" : "parallel_name";
-      // don't override a set/parallel the request already named
-      if ((type === "set" && base.set_name) || (type === "parallel" && base.parallel_name)) cache.set(key, Promise.resolve([]));
-      else cache.set(key, queryCards({ ...base, [field]: text }, post));
+      // don't override a set/parallel the request already named (a bare year is fine: it joins the set)
+      if ((type === "set" && base.set_name && !yearOnly(base)) || (type === "parallel" && base.parallel_name)) cache.set(key, Promise.resolve([]));
+      else cache.set(key, queryCards({ ...base, [field]: fieldFor(base, type, text) }, post));
     }
     return cache.get(key)!;
   };
@@ -216,21 +259,21 @@ function makeProber(base: CardFilters, post: PostFilters): Prober {
 
 /** What is this run of words? Tries it as a player, set, then parallel. If none, splits it
  *  ("victor wembanyama haunted hoops" -> player + set) and, for a single leftover word, tries a close spelling. */
-async function segment(words: string[], probe: Prober): Promise<Seg[]> {
+async function segment(words: string[], probe: Prober, base: CardFilters = {}): Promise<Seg[]> {
   const text = words.join(" ");
   const types = ["player", "set", "parallel"] as const;
   const whole = await Promise.all(types.map((t) => probe(t, text)));
   const hit = whole.findIndex((r) => r.length > 0);
-  if (hit >= 0) return [{ type: types[hit], text, field: text, rows: whole[hit] }];
+  if (hit >= 0) return [{ type: types[hit], text, field: fieldFor(base, types[hit], text), rows: whole[hit] }];
 
   if (words.length > 1 && words.length <= 8) {
     for (let k = words.length - 1; k >= 1; k--) {
       const left = words.slice(0, k).join(" ");
       const lr = await Promise.all(types.map((t) => probe(t, left)));
       const li = lr.findIndex((r) => r.length > 0);
-      if (li >= 0) return [{ type: types[li], text: left, field: left, rows: lr[li] }, ...(await segment(words.slice(k), probe))];
+      if (li >= 0) return [{ type: types[li], text: left, field: fieldFor(base, types[li], left), rows: lr[li] }, ...(await segment(words.slice(k), probe, base))];
     }
-    return [{ type: "none", text: words[0], field: words[0], rows: [] }, ...(await segment(words.slice(1), probe))];
+    return [{ type: "none", text: words[0], field: words[0], rows: [] }, ...(await segment(words.slice(1), probe, base))];
   }
 
   const w = words[0];

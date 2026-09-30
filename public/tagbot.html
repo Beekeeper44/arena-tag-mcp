@@ -429,7 +429,7 @@ function render(){
   const sel=S.rows.filter(r=>S.selected.has(r.item_id));
   const ev=sel.reduce((s,r)=>s+r.ev,0);
   const replacing=S.action==="set"?sel.filter(r=>r.tag&&r.tag!==S.tag).length:0;
-  const lab={contains:"also matches",ac_number:"AC #",cert_number:"cert",player_name:"player",set_name:"set",parallel_name:"parallel",grading_company:"grader",grade:"grade",min_estimated_value:"min",max_estimated_value:"max",sport:"sport",tag:"current tag"};
+  const lab={set_number:"card #",contains:"also matches",ac_number:"AC #",cert_number:"cert",player_name:"player",set_name:"set",parallel_name:"parallel",grading_company:"grader",grade:"grade",min_estimated_value:"min",max_estimated_value:"max",sport:"sport",tag:"current tag"};
   const chips=Object.entries(S.filters).map(([k,v])=>`<span class="chip"><i>${Array.isArray(v)?`${lab[k]||k}s (${v.length})`:(lab[k]||k)}</i> ${esc(k.includes("value")?money(v):v==="__base__"?"base (no parallel)":Array.isArray(v)?v.join(" or "):String(v).replace("%"," "))}</span>`).join("");
   const locked=S.phase!=="review";
   $("#summary").innerHTML=`<div class="summary">
@@ -517,7 +517,7 @@ function showInfo(id){
         ${row("Current tag",r.tag?`<span class="pill">${esc(r.tag)}</span>`:"no tag")}
         ${row("Status",esc(r.status))}
         ${row("Sport",esc(r.sport))}
-        ${row("Cert",esc(r.cert))}${row("AC number",esc(r.ac))}
+        ${row("Card number",esc(r.set_number))}${row("Cert",esc(r.cert))}${row("AC number",esc(r.ac))}
         ${row("Storage",(r.bin||r.slot)?`Bin ${esc(r.bin??"—")} · Slot ${esc(r.slot??"—")}`:"")}
         ${row("Order",esc(r.order_number))}${row("PO",esc(r.po_number))}
         ${row("Purchase cost",r.purchase_cost!=null?money(r.purchase_cost):"")}${row("Bought at",esc(r.purchase_location))}

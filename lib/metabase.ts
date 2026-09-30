@@ -14,6 +14,7 @@ export type CardFilters = {
   tag?: string; // contains-match on current tag (question's own filter)
   cert_number?: string | string[];
   ac_number?: string | string[];
+  set_number?: string | string[]; // card number on the card, e.g. "US189" (needs SET_NUMBER in question 4131)
   min_ev_age_days?: number;
   max_ev_age_days?: number;
   min_times_sold_back?: number;
@@ -55,6 +56,7 @@ export type CardRow = {
   purchase_cost: number | null;
   purchase_location: string | null;
   po_number: string | null;
+  set_number: string | null;
 };
 
 type TemplateTag = { name: string; type: string; id?: string; ptype?: string };
@@ -183,12 +185,13 @@ function toRow(obj: Record<string, unknown>): CardRow {
     purchase_cost: n(o.PURCHASE_COST),
     purchase_location: s(o.PURCHASE_LOCATION),
     po_number: s(o.PO_NUMBER),
+    set_number: s(o.SET_NUMBER ?? o.CARD_NUMBER),
   };
 }
 
 // Question 4131 takes one value per filter. For lists (e.g. several players) the server
 // runs one query per combination and merges the results by ITEM_ID.
-const LIST_KEYS = ["player_name", "set_name", "parallel_name", "grade", "ac_number", "cert_number"] as const;
+const LIST_KEYS = ["player_name", "set_name", "parallel_name", "grade", "ac_number", "cert_number", "set_number"] as const;
 const MAX_QUERIES = 50; // e.g. 25 names × 2 sets
 
 type SingleFilters = { [K in keyof CardFilters]: CardFilters[K] extends string | string[] | undefined ? string : CardFilters[K] };
@@ -262,7 +265,19 @@ async function queryOnce(filters: CardFilters, post: PostFilters = {}): Promise<
   if (!Array.isArray(data)) {
     throw new Error(`Unexpected Metabase response: ${JSON.stringify(data).slice(0, 500)}`);
   }
+  if (filters.set_number && data.length && !data.some((o: Record<string, unknown>) => Object.keys(o).some((k) => /^(set_number|card_number)$/i.test(k)))) {
+    throw new Error("Question 4131 doesn't include card numbers yet. Add cards.set_number (SET_NUMBER) to 4131 and save it, then search again.");
+  }
   let rows = applyLocal(data.map(toRow).filter((r) => r.item_id), local);
+  // card numbers are exact: "US189" never matches "US1890"; "#" and spaces ignored
+  if (typeof filters.set_number === "string") {
+    const want = normNo(filters.set_number);
+    // "US189" must match exactly; digits alone ("189") match any prefix (US189, 189)
+    rows = rows.filter((r) => {
+      const have = normNo(r.set_number);
+      return /^\d+[a-z]?$/.test(want) ? have === want || have.replace(/^[a-z]+-?/, "") === want : have === want;
+    });
+  }
 
   if (post.only_untagged) rows = rows.filter((r) => !r.tag);
   if (post.only_base) rows = rows.filter((r) => !r.parallel_name);
@@ -326,3 +341,5 @@ export function gradeMatches(r: CardRow, post: PostFilters): boolean {
   if (!graders.length && !pairs.length && nums.length) return nums.includes(num);
   return false;
 }
+
+export const normNo = (v: unknown) => String(v ?? "").toLowerCase().replace(/^#|\s+|^no\.?/g, "").trim();
