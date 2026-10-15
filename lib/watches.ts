@@ -24,7 +24,7 @@ export type WatchFilters = {
 const K = (k: string) => k.toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_|_$/g, "");
 const COLS: Record<string, string[]> = {
   item_id: ["ITEM_ID", "ID", "WATCH_ID", "ITEMS_ID", "UUID"],
-  brand: ["BRAND", "WATCH_BRAND", "BRAND_NAME", "MAKE"],
+  brand: ["BRAND_NAME", "BRAND", "WATCH_BRAND", "MAKE"],
   model: ["MODEL", "WATCH_MODEL", "MODEL_NAME", "COLLECTION", "NAME", "TITLE"],
   reference: ["REFERENCE", "REFERENCE_NUMBER", "REF", "REF_NUMBER", "REFERENCE_NO", "MODEL_NUMBER"],
   dial: ["DIAL_COLOR", "DIAL_COLOUR", "DIAL"],
@@ -38,7 +38,7 @@ const COLS: Record<string, string[]> = {
   ev_cents: ["ESTIMATED_VALUE_CENTS", "EV_CENTS"],
   tag: ["TAG", "ITEM_TAG", "TAGS"],
   status: ["ITEM_STATUS", "STATUS", "WATCH_STATUS"],
-  url: ["URL", "ADMIN_URL", "ITEM_URL", "WATCH_URL", "LINK"],
+  url: ["ITEM_URL", "ADMIN_URL", "WATCH_URL", "URL", "LINK"],
   bin: ["STORAGE_BIN_ID", "BIN", "STORAGE_BIN"],
   slot: ["STORAGE_BIN_SLOT", "SLOT"],
 };
@@ -68,15 +68,16 @@ function toWatch(raw: Record<string, unknown>): WatchRow {
     item_id: String(pick(o, COLS.item_id) ?? ""),
     brand: str(pick(o, COLS.brand)), model: str(pick(o, COLS.model)), reference: str(pick(o, COLS.reference)),
     dial: str(pick(o, COLS.dial)), serial: str(pick(o, COLS.serial)), year: str(pick(o, COLS.year)),
-    condition: str(pick(o, COLS.condition)), material: str(pick(o, COLS.material)), size: str(pick(o, COLS.size)),
+    condition: str(pick(o, COLS.condition)), material: str(pick(o, COLS.material)),
+    size: ((v) => (v && /^\d+(\.\d+)?$/.test(v) ? `${v}mm` : v))(str(pick(o, COLS.size))),
     bracelet: str(pick(o, COLS.bracelet)), ev: Number.isFinite(ev as number) ? (ev as number) : null,
     title: str(loose(o, ["TITLE", "NAME", "LISTING_TITLE", "DISPLAY_NAME", "ITEM_NAME", "WATCH_NAME"])),
     movement: str(loose(o, ["MOVEMENT", "MOVEMENT_TYPE", "CALIBER"], /MOVEMENT/)),
     bracelet_material: str(loose(o, ["BRACELET_MATERIAL", "STRAP_MATERIAL", "BAND_MATERIAL"], /(BRACELET|STRAP|BAND).*MATERIAL/)),
     bracelet_color: str(loose(o, ["BRACELET_COLOR", "BRACELET_COLOUR", "STRAP_COLOR", "BAND_COLOR"], /(BRACELET|STRAP|BAND).*COLOU?R/)),
     gender: str(loose(o, ["GENDER", "SEX"], /GENDER/)),
-    box: yn(loose(o, ["BOX", "HAS_BOX", "BOX_TYPE", "ORIGINAL_BOX", "WATCH_BOX"], /(^|_)BOX(_|$)/)),
-    papers: yn(loose(o, ["PAPERS", "HAS_PAPERS", "PAPERS_TYPE", "ORIGINAL_PAPERS", "WATCH_PAPERS"], /PAPERS/)),
+    box: yn(loose(o, ["BOX_DETAILS", "BOX", "HAS_BOX", "BOX_TYPE", "ORIGINAL_BOX", "WATCH_BOX"], /(^|_)BOX(_|$)/)),
+    papers: yn(loose(o, ["PAPERS_DETAILS", "PAPERS", "HAS_PAPERS", "PAPERS_TYPE", "ORIGINAL_PAPERS", "WATCH_PAPERS"], /PAPERS/)),
     ac: str(loose(o, ["AC_NUMBER", "8AC_NUMBER", "AC", "AC_NO"], /(^|_)AC(_|$)/)),
     order: str(loose(o, ["ORDER_NUMBER", "ORDER_NO", "ORDER", "NUMBER"], /^(?!PURCHASE).*ORDER/)),
     po: str(loose(o, ["PO_NUMBER", "PO", "PO_NO", "PO_ID", "PURCHASE_ORDER", "PURCHASE_ORDER_NUMBER"], /(^|_)PO(_|$)|PURCHASE_ORDER/)),
@@ -88,8 +89,9 @@ function toWatch(raw: Record<string, unknown>): WatchRow {
 
 // Question 45046 has LIMIT 5000 (newest first) in its SQL, so pulling it with no filters misses older watches.
 // Every search goes through the question's own filters instead (they run inside the SQL, before the limit),
-// exactly like typing into Tag / Brand / Model / PO # / Order # / Reference # in Metabase. Results are merged.
-type Param = { name: string; id: string; type: string };
+// exactly like using Reference Number / Brand / Model / Po Number / Order Number / Tag in Metabase. Results are merged.
+// Field filters (dropdowns, exact values) get the exact values from the filter's own value list; text filters get the words.
+type Param = { name: string; id: string; type: string; dimension: boolean };
 let paramCache: { at: number; params: Param[] } | null = null;
 
 async function mb(path: string, init: RequestInit = {}) {
@@ -104,33 +106,63 @@ async function watchParams(): Promise<Param[]> {
   const byName = new Map<string, Param>();
   const tagsets = [card?.dataset_query?.native?.["template-tags"], ...(card?.dataset_query?.stages ?? []).map((st: any) => st?.["template-tags"])];
   for (const ts of tagsets) for (const [k, v] of Object.entries((ts ?? {}) as Record<string, any>)) {
-    if (v?.type === "dimension" || v?.type === "snippet" || v?.type === "card") continue;
-    byName.set(v?.name || k, { name: v?.name || k, id: v?.id, type: v?.type === "number" ? "number/=" : "category" });
+    if (v?.type === "snippet" || v?.type === "card") continue;
+    const dim = v?.type === "dimension";
+    byName.set(v?.name || k, { name: v?.name || k, id: v?.id, dimension: dim, type: dim ? v?.["widget-type"] || "string/=" : v?.type === "number" ? "number/=" : "category" });
   }
   for (const p of card?.parameters ?? []) {
     const t = p?.target;
     const name = Array.isArray(t) && Array.isArray(t[1]) && t[1][0] === "template-tag" ? t[1][1] : null;
-    if (name) byName.set(name, { name, id: p.id || byName.get(name)?.id, type: p.type || byName.get(name)?.type || "category" });
+    if (!name) continue;
+    const prev = byName.get(name);
+    byName.set(name, { name, id: p.id || prev?.id, type: p.type || prev?.type || "category", dimension: prev?.dimension ?? t[0] === "dimension" });
   }
   const params = [...byName.values()].filter((p) => p.id);
   paramCache = { at: Date.now(), params };
   return params;
 }
 
-/** The question's filters, by what they're for. Names are matched loosely (tag / brand / model / po / order / reference / dial). */
+/** The question's filters, by what they're for (names matched loosely). */
 async function watchFilters() {
   const ps = await watchParams();
-  const find = (re: RegExp) => ps.filter((p) => re.test(p.name.replace(/[^a-z#]/gi, "_").toLowerCase()));
+  const key = (p: Param) => p.name.replace(/[^a-z#]/gi, "_").toLowerCase();
+  const find = (re: RegExp) => ps.filter((p) => re.test(key(p)));
   return {
-    words: [...find(/^tags?$|(^|_)tag(_|$)/), ...find(/brand/), ...find(/model/), ...find(/dial|colou?r/)],
-    numbers: [...find(/(^|_)po(_|$|#|_?n(umber|o))|purchase_order/), ...find(/order/).filter((p) => !/purchase/.test(p.name.toLowerCase())), ...find(/ref/), ...find(/serial/)],
     tag: find(/^tags?$|(^|_)tag(_|$)/),
-    all: ps,
+    brand: find(/brand|make/),
+    model: find(/model/),
+    dial: find(/dial|colou?r/),
+    reference: find(/ref/),
+    ids: [...find(/(^|_)po(_|$|#|_?n(umber|o))|purchase_order/), ...find(/order/).filter((p) => !/purchase/.test(key(p))), ...find(/serial|(^|_)ac(_|$)/)],
   };
 }
 
-async function runWith(param: Param | null, value: string): Promise<WatchRow[]> {
-  const parameters = param ? [{ id: param.id, type: param.type, target: ["variable", ["template-tag", param.name]], value: [value] }] : [];
+// exact-value filters ("=" / category / dropdown) vs. ones that match part of the text
+const isExact = (p: Param) => !/contains|starts|ends/.test(p.type);
+
+/** The values a filter's dropdown offers (Metabase's own list), cached 10 minutes. null = not available. */
+const valueCache = new Map<string, { at: number; values: string[] | null }>();
+async function filterValues(p: Param): Promise<string[] | null> {
+  const hit = valueCache.get(p.id);
+  if (hit && Date.now() - hit.at < 600_000) return hit.values;
+  let values: string[] | null = null;
+  try {
+    const res = await mb(`/api/card/${config.watchCardId()}/params/${encodeURIComponent(p.id)}/values`);
+    if (res.ok) {
+      const body = await res.json();
+      const list = Array.isArray(body) ? body : body?.values;
+      if (Array.isArray(list)) values = list.map((v: unknown) => (Array.isArray(v) ? v[0] : v)).filter((v: unknown) => v != null && v !== "").map(String);
+    }
+  } catch { /* fall back to typed words */ }
+  valueCache.set(p.id, { at: Date.now(), values });
+  return values;
+}
+
+async function runWith(param: Param | null, value: string | string[]): Promise<WatchRow[]> {
+  const vals = ([] as string[]).concat(value);
+  const parameters = param
+    ? [{ id: param.id, type: param.type, target: [param.dimension ? "dimension" : "variable", ["template-tag", param.name]], value: param.dimension ? vals : [vals[0]] }]
+    : [];
   const path = `/api/card/${config.watchCardId()}/query/json`;
   let res = await mb(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ parameters, format_rows: false }) });
   if (!res.ok && res.status >= 400 && res.status < 500) {
@@ -189,25 +221,53 @@ function searchTerms(text: string) {
   const toks = t.split(/[\s,]+/).filter(Boolean);
   const words = toks.filter((w) => /^[a-z][a-z.&-]*$/.test(w) && w.length >= 3 && !STOP.has(w) && !COLORS.includes(w));
   const numbers = toks.filter((w) => /\d/.test(w) && w.replace(/[^a-z0-9]/g, "").length >= 3 && !/^(19|20)\d\d$/.test(w) && !/^\d{1,3}(mm)?$/.test(w));
-  return { tags: [...new Set(tags)], words: [...new Set(words)], numbers: [...new Set(numbers)] };
+  return { tags: [...new Set(tags)], words: [...new Set(words)], numbers: [...new Set(numbers)], expanded: t };
+}
+
+/** Which of a filter's values the request names: whole value typed ("patek philippe"), or a typed word that is one
+ *  of the value's words ("patek", "datejust"); tags must match exactly; references by prefix. */
+function pickValues(values: string[], kind: "tag" | "words" | "reference", text: string, words: string[], numbers: string[], tags: string[]) {
+  const t = " " + norm(text) + " ";
+  if (kind === "tag") { const want = new Set([...tags, ...words]); return values.filter((v) => want.has(v.toLowerCase())); }
+  if (kind === "reference") return values.filter((v) => numbers.some((n) => alnum(v).startsWith(alnum(n))));
+  return values.filter((v) => {
+    const nv = norm(v);
+    if (nv.length >= 2 && has(t, nv)) return true;
+    const vw = nv.split(/[\s-]+/);
+    return words.some((w) => vw.includes(w) || (w.includes("-") && nv.includes(w)));
+  });
 }
 
 export async function queryWatches(text = ""): Promise<{ rows: WatchRow[]; searches: number; notice?: string }> {
   const f = await watchFilters();
-  const { tags, words, numbers } = searchTerms(text);
-  const jobs: [Param, string][] = [];
-  for (const tg of tags) for (const p of f.tag.length ? f.tag : f.words) jobs.push([p, tg]);
-  for (const w of words) for (const p of f.words) jobs.push([p, w]);
-  for (const n of numbers) for (const p of [...f.numbers, ...f.tag]) jobs.push([p, n]);
+  const { tags, words, numbers, expanded } = searchTerms(text);
+  const jobs: [Param, string | string[]][] = [];
+  const route = async (ps: Param[], kind: "tag" | "words" | "reference", typed: string[]) => {
+    for (const p of ps) {
+      if (isExact(p)) {
+        const values = await filterValues(p);
+        if (values) { const hit = pickValues(values, kind, expanded, words, numbers, tags); if (hit.length) jobs.push([p, hit]); continue; }
+      }
+      for (const v of typed) jobs.push([p, v]); // text filter (or no value list): send what was typed
+    }
+  };
+  await route(f.tag, "tag", [...tags, ...words]);
+  await route(f.brand, "words", words);
+  await route(f.model, "words", words);
+  await route(f.dial, "words", words);
+  await route(f.reference, "reference", numbers);
+  for (const n of numbers) for (const p of f.ids) jobs.push([p, n]);
   if (!jobs.length) {
     // nothing to route through a filter (e.g. "blue dial over $40k"): whole question, which its SQL may cap
     const rows = await runWith(null, "");
     return { rows, searches: 1, notice: rows.length >= 5000 ? `Question ${config.watchCardId()} only returns its newest ${rows.length.toLocaleString()} watches without a filter. Add a brand, model, tag or reference to search all of them, or remove the LIMIT from its SQL.` : undefined };
   }
-  const results = await inBatches(jobs, 8, ([p, v]) => runWith(p, v));
+  // exact-value filters take every matching value in one query; text filters one value per query
+  const runs: [Param, string | string[]][] = jobs.flatMap(([p, v]) => (Array.isArray(v) && !p.dimension ? v.map((x) => [p, x] as [Param, string]) : [[p, v] as [Param, string | string[]]]));
+  const results = await inBatches(runs, 8, ([p, v]) => runWith(p, v));
   const byId = new Map<string, WatchRow>();
   for (const rs of results) for (const r of rs) byId.set(r.item_id, r);
-  return { rows: [...byId.values()], searches: jobs.length };
+  return { rows: [...byId.values()], searches: runs.length };
 }
 
 // ---------- read the typed request ----------
@@ -348,7 +408,7 @@ export const watchToTile = (r: WatchRow) => ({
   card_url: r.url, status: r.status, bin: r.bin, slot: r.slot, ac: r.reference ?? "", cert: r.serial ?? "",
   brand: r.brand, model: r.model, reference: r.reference, dial: r.dial, serial: r.serial, year: r.year,
   condition: r.condition, material: r.material, size: r.size, bracelet: r.bracelet, extra: r.extra,
-  title: r.title || [r.model, r.size, r.dial].filter(Boolean).join(" "), movement: r.movement,
+  title: r.title || r.model || "", movement: r.movement,
   bracelet_material: r.bracelet_material, bracelet_color: r.bracelet_color, gender: r.gender, box: r.box, papers: r.papers,
   watch_ac: r.ac, order_number: r.order, po_number: r.po, purchase_cost: r.cost,
   parallel_total: null, ev_age_days: null,
