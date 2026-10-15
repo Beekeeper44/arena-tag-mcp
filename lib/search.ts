@@ -2,7 +2,7 @@
 // Instead of pulling all of question 4131 to learn names, each part of the request is passed
 // straight into 4131's own filters (like typing it into Metabase), so only matching cards come back.
 import { queryCards, type CardFilters, type CardRow, type PostFilters } from "./metabase";
-import { parseRequest, buildLexiconFromRows, extractIds, STOP, ALIAS as ALIAS_RAW, GENERIC_SETS, GENERIC_PARALLELS } from "./parse";
+import { parseRequest, buildLexiconFromRows, extractIds, STOP, ALIAS as ALIAS_RAW, GENERIC_SETS, GENERIC_PARALLELS, markPlainTag } from "./parse";
 const ALIAS = ALIAS_RAW as Record<string, string>;
 
 // categories people type in plain words -> 4131 SPORT value
@@ -29,7 +29,7 @@ const esc = (x: string) => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 function namePhrases(text: string, used: string[]) {
   let t = " " + text.toLowerCase().replace(/[’']/g, "'") + " ";
   t = t.replace(/#[a-z0-9_-]+/g, " | ").replace(/\btag\s*[:=]\s*[a-z0-9_-]+/g, " | ").replace(/\b[a-z0-9]+(?:_[a-z0-9-]+)+\b/g, " | ");
-  t = t.replace(/\$\s*[\d,.]+\s*k?\+?/g, " | ").replace(/\b\d+(?:\.\d+)?k?\b/g, " | ");
+  t = t.replace(/\$\s*[\d,.]+\s*k?\+?/g, " | ").replace(/\b\d+(?:\.\d+)?(?:k|s)?\b/g, " | ");
   for (const u of used.filter(Boolean).sort((a, b) => b.length - a.length)) t = t.replace(new RegExp("\\b" + esc(u) + "(?:s|es)?\\b", "g"), " | ");
   t = t.replace(GRADER_RE, " | ");
   t = t.replace(/[,;/&+()]|\b(and|or|plus|with|vs)\b/g, " | ");
@@ -62,6 +62,7 @@ function namePhrases(text: string, used: string[]) {
 
 
 export async function smartSearch(text: string) {
+  text = markPlainTag(text);
   const t0 = Date.now();
   const cn = extractCardNumbers(text);
   const ids = extractIds(cn.rest);
@@ -136,7 +137,7 @@ export async function smartSearch(text: string) {
   // players OR'd together, sets OR'd, parallels OR'd; AND across the three
   const byType = (t: SegType) => found.filter((g) => g.type === t);
   let acc: CardRow[] | null = null;
-  for (const t of ["player", "set", "parallel"] as SegType[]) {
+  for (const t of ["player", "set", "parallel", "tag"] as SegType[]) {
     const group = byType(t);
     if (!group.length) continue;
     const u = dedupe(group.flatMap((g) => g.rows));
@@ -169,14 +170,24 @@ export async function smartSearch(text: string) {
 
   if (yearOnly(base) && byType("set").length) display.set_name = byType("set").map((g) => g.field.replace("%", " ")).join(" / ");
   if (base.set_number) (display as Record<string, unknown>).set_number = base.set_number;
+  if (lab("tag").length) {
+    const tags = [...([] as string[]).concat(display.tag ?? []), ...lab("tag")];
+    display.tag = tags.length === 1 ? tags[0] : tags;
+    const exactTags = byType("tag").filter((g) => g.exact).map((g) => g.text.toLowerCase());
+    if (exactTags.length) post.current_tags_exact = [...new Set([...(post.current_tags_exact ?? []), ...exactTags])];
+    // only tag words typed and no new tag: ready to remove, like "sd_rookie_grail"
+    if (!parsed.tag && found.every((g) => g.type === "tag")) parsed.action = "clear";
+  }
 
   // the exact searches to re-run before writing
   const P = byType("player").length ? byType("player").map((g) => g.field) : [null];
   const S = byType("set").length ? byType("set").map((g) => g.field) : [null];
   const R = byType("parallel").length ? byType("parallel").map((g) => g.field) : [null];
+  const TG = byType("tag").length ? byType("tag").map((g) => g.field) : [null];
   const queries: CardFilters[] = [];
-  for (const a of P) for (const b of S) for (const c of R) queries.push({ ...base, ...(a ? { player_name: a } : {}), ...(b ? { set_name: b } : {}), ...(c ? { parallel_name: c } : {}) });
-  return done(t0, parsed, display, post, queries.slice(0, 60), rows, missing);
+  for (const a of P) for (const b of S) for (const c of R) for (const d of TG)
+    queries.push({ ...base, ...(a ? { player_name: a } : {}), ...(b ? { set_name: b } : {}), ...(c ? { parallel_name: c } : {}), ...(d ? { tag: d } : {}) });
+  return done(t0, parsed, display, post, queries, rows, missing);
 }
 
 // ---- card numbers on the card: "#US189", "us189", "card #189", "no. 12", "LITM-1" ----
@@ -234,7 +245,7 @@ function readGrading(text: string) {
   return { companies, pairs, nums };
 }
 
-type SegType = "player" | "set" | "parallel" | "none";
+type SegType = "player" | "set" | "parallel" | "tag" | "none";
 type Seg = { type: SegType; text: string; field: string; rows: CardRow[]; exact?: boolean };
 const normName = (v: unknown) => String(v ?? "").toLowerCase().replace(/[.,']/g, "").replace(/\b(jr|sr|ii|iii|iv)\b/g, "").replace(/\s+/g, " ").trim();
 type Prober = (type: Exclude<SegType, "none">, text: string) => Promise<CardRow[]>;
@@ -248,9 +259,9 @@ function makeProber(base: CardFilters, post: PostFilters): Prober {
   return (type, text) => {
     const key = type + "|" + text;
     if (!cache.has(key)) {
-      const field = type === "player" ? "player_name" : type === "set" ? "set_name" : "parallel_name";
+      const field = type === "player" ? "player_name" : type === "set" ? "set_name" : type === "tag" ? "tag" : "parallel_name";
       // don't override a set/parallel the request already named (a bare year is fine: it joins the set)
-      if ((type === "set" && base.set_name && !yearOnly(base)) || (type === "parallel" && base.parallel_name)) cache.set(key, Promise.resolve([]));
+      if ((type === "set" && base.set_name && !yearOnly(base)) || (type === "parallel" && base.parallel_name) || (type === "tag" && (base.tag || !/^[a-z0-9_]+$/.test(text)))) cache.set(key, Promise.resolve([]));
       else cache.set(key, queryCards({ ...base, [field]: fieldFor(base, type, text) }, post));
     }
     return cache.get(key)!;
@@ -261,9 +272,13 @@ function makeProber(base: CardFilters, post: PostFilters): Prober {
  *  ("victor wembanyama haunted hoops" -> player + set) and, for a single leftover word, tries a close spelling. */
 async function segment(words: string[], probe: Prober, base: CardFilters = {}): Promise<Seg[]> {
   const text = words.join(" ");
-  const types = ["player", "set", "parallel"] as const;
+  const types = ["player", "set", "parallel", "tag"] as const; // a word that's none of the first three may be a tag ("vookum")
   const whole = await Promise.all(types.map((t) => probe(t, text)));
   const hit = whole.findIndex((r) => r.length > 0);
+  if (hit >= 0 && types[hit] === "tag") {
+    const exact = whole[hit].filter((r) => (r.tag ?? "").toLowerCase() === text.toLowerCase());
+    return [{ type: "tag", text, field: text, rows: exact.length ? exact : whole[hit], exact: exact.length > 0 }];
+  }
   if (hit >= 0) return [{ type: types[hit], text, field: fieldFor(base, types[hit], text), rows: whole[hit] }];
 
   if (words.length > 1 && words.length <= 8) {
@@ -302,11 +317,14 @@ function dedupe(rows: CardRow[]) {
   return [...m.values()];
 }
 function done(t0: number, parsed: ReturnType<typeof parseRequest>, display: CardFilters, post: PostFilters, queries: CardFilters[], rows: CardRow[], missing: string[], hasFilter = true) {
+  // tags searched for that no matching card has
+  const tagMiss = (post.current_tags_exact ?? []).filter((t) => !rows.some((r) => (r.tag ?? "").toLowerCase() === t.toLowerCase()));
+  if (parsed.filters.tag && !display.tag) display = { ...display, tag: parsed.filters.tag as string | string[] };
   return {
     parsed: { ...parsed, filters: display, post_filters: post },
     queries,
     rows,
-    missing,
+    missing: [...missing, ...tagMiss.filter((t) => !missing.includes(t))],
     has_filter: hasFilter,
     ms: Date.now() - t0,
   };

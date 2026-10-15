@@ -1,13 +1,14 @@
 // JSON API for the Tag Bot screen. Everything except login needs the signed-in cookie.
 import { config } from "@/lib/config";
 import { type CardFilters, type PostFilters } from "@/lib/metabase";
-import { runSelection, undoRun, listRuns } from "@/lib/runs";
+import { runSelection, runWatchSelection, undoRun, listRuns } from "@/lib/runs";
 import { listPrompts, addPrompt, renamePrompt, deletePrompt } from "@/lib/ui";
 import {
   can, type Role, type User, currentUser, sessionCookie, clearCookie, needsSetup, login, setupFirstAdmin, inviteInfo, acceptInvite,
   changePassword, adminLoginFor, listUsers, addUser, updateUser, resetInvite, relinkAdmin, testAdmin,
 } from "@/lib/users";
 import { smartSearch } from "@/lib/search";
+import { searchWatches, watchToTile } from "@/lib/watches";
 
 export const maxDuration = 300;
 
@@ -34,6 +35,17 @@ export async function GET(req: Request, ctx: Ctx) {
         });
       case "users":
         return forbid(u, "admin") ?? json(await listUsers());
+      case "img": {
+        // Same-origin copy of a watch photo so the screen can cut out its white background (signed-in only).
+        const src = new URL(req.url).searchParams.get("u") || "";
+        if (!/^https:\/\//i.test(src)) return json({ error: "bad url" }, 400);
+        const r = await fetch(src, { redirect: "follow" });
+        const type = r.headers.get("content-type") || "";
+        if (!r.ok || !type.startsWith("image/")) return json({ error: `image ${r.status}` }, 502);
+        const buf = await r.arrayBuffer();
+        if (buf.byteLength > 12 * 1024 * 1024) return json({ error: "image too large" }, 413);
+        return new Response(buf, { headers: { "Content-Type": type, "Cache-Control": "private, max-age=86400" } });
+      }
       case "runs":
         return json(await listRuns(15));
       case "prompts":
@@ -82,9 +94,12 @@ export async function POST(req: Request, ctx: Ctx) {
   try {
     switch (action) {
       case "find": {
+        if (body.kind === "watches") {
+          const w = await searchWatches(String(body.text ?? ""));
+          return json({ parsed: w.parsed, has_filter: w.has_filter, queries: [], ms: w.ms, total: w.rows.length, missing: w.missing, inventory: w.inventory, cards: w.rows.map(watchToTile), notice: w.notice });
+        }
         // Every prompt queries question 4131 fresh, using its own filters (only matching cards come back).
         const r = await smartSearch(String(body.text ?? ""));
-        const LIMIT = 3000;
         return json({
           parsed: r.parsed,
           has_filter: r.has_filter,
@@ -92,7 +107,7 @@ export async function POST(req: Request, ctx: Ctx) {
           ms: r.ms,
           total: r.rows.length,
           missing: r.missing,
-          cards: r.rows.slice(0, LIMIT).map((r) => ({
+          cards: r.rows.map((r) => ({
             item_id: r.item_id, ac: r.ac_number ?? "", cert: r.cert_number ?? "", sport: (r.sport ?? "").toLowerCase(),
             set_name: r.set_name ?? "", player_name: r.player_name ?? "(no player)", parallel_name: r.parallel_name,
             grading_company: (r.grading_company ?? "").toLowerCase(), grade: (r.grade ?? "").toLowerCase(),
@@ -105,6 +120,19 @@ export async function POST(req: Request, ctx: Ctx) {
         });
       }
       case "apply":
+        if (body.kind === "watches")
+          return json(
+            await runWatchSelection({
+              text: str("text"),
+              action: body.action === "clear" ? "clear" : "set",
+              tag: (body.tag as string) ?? null,
+              mode: body.mode === "skip_tagged" ? "skip_tagged" : "overwrite",
+              item_ids: Array.isArray(body.item_ids) ? (body.item_ids as string[]) : [],
+              dry_run: body.dry_run === true,
+              user: u.name,
+              as_admin_user_id: adminLoginFor(u),
+            })
+          );
         return json(
           await runSelection({
             filters: (body.filters ?? {}) as CardFilters,

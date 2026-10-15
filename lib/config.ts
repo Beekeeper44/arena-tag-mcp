@@ -20,6 +20,9 @@ export const config = {
   metabaseHost: () => req("METABASE_HOST").replace(/\/+$/, ""),
   metabaseApiKey: () => req("METABASE_API_KEY"),
   metabaseCardId: () => num("METABASE_CARD_ID", 4131),
+  watchCardId: () => num("WATCH_METABASE_CARD_ID", 45046),
+  // Admin path that saves a watch's tag, e.g. /items/{id}. Live watch writes stay off until this is set.
+  watchTagPath: () => process.env.WATCH_TAG_PATH || "",
 
   // Admin (writes)
   adminApiUrl: () => (process.env.ADMIN_API_URL || "https://admin-api.arenaclub.com").replace(/\/+$/, ""),

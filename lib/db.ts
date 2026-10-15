@@ -59,6 +59,7 @@ async function ensureSchema() {
           PRIMARY KEY (run_id, item_id)
         )`);
       await s.query(`ALTER TABLE tag_runs ADD COLUMN IF NOT EXISTS admin_as text`);
+      await s.query(`ALTER TABLE tag_runs ADD COLUMN IF NOT EXISTS kind text NOT NULL DEFAULT 'card'`);
       // Same table as ev-bot: point DATABASE_URL at ev-bot's Neon database and everyone's ev-bot login works here.
       await s.query(`
         CREATE TABLE IF NOT EXISTS ev_users (

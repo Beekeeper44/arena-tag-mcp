@@ -63,9 +63,11 @@ function headers(accessToken: string): Record<string, string> {
 
 export type WriteResult = { ok: boolean; status: number; returnedTag?: string | null; error?: string };
 
-export async function patchTag(session: AdminSession, itemId: string, tag: string | null): Promise<WriteResult> {
+export async function patchTag(session: AdminSession, itemId: string, tag: string | null, kind: "card" | "watch" = "card"): Promise<WriteResult> {
   if (!/^[0-9a-f-]{36}$/i.test(itemId)) return { ok: false, status: 0, error: "invalid item id" };
-  const url = `${config.adminApiUrl()}/cards/${itemId}`;
+  const path = kind === "watch" ? config.watchTagPath() : "/cards/{id}";
+  if (!path) return { ok: false, status: 0, error: "WATCH_TAG_PATH is not set" };
+  const url = `${config.adminApiUrl()}${path.replace("{id}", itemId)}`;
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
       const res = await fetch(url, {

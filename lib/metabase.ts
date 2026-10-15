@@ -11,7 +11,7 @@ export type CardFilters = {
   grade?: string | string[];
   min_estimated_value?: number;
   max_estimated_value?: number;
-  tag?: string; // contains-match on current tag (question's own filter)
+  tag?: string | string[]; // current tag(s): one 4131 query per tag, then exact match
   cert_number?: string | string[];
   ac_number?: string | string[];
   set_number?: string | string[]; // card number on the card, e.g. "US189" (needs SET_NUMBER in question 4131)
@@ -23,6 +23,7 @@ export type CardFilters = {
 export type PostFilters = {
   only_untagged?: boolean; // keep cards with no current tag
   current_tag_exact?: string; // keep cards whose current tag is exactly this
+  current_tags_exact?: string[]; // keep cards whose current tag is any of these (case-insensitive)
   only_base?: boolean; // keep cards with no parallel
   // several grading companies / grades in one request (e.g. "psa, beckett, sgc 10s")
   graders?: string[]; // any of these companies (any grade unless a pair or number says otherwise)
@@ -191,8 +192,7 @@ function toRow(obj: Record<string, unknown>): CardRow {
 
 // Question 4131 takes one value per filter. For lists (e.g. several players) the server
 // runs one query per combination and merges the results by ITEM_ID.
-const LIST_KEYS = ["player_name", "set_name", "parallel_name", "grade", "ac_number", "cert_number", "set_number"] as const;
-const MAX_QUERIES = 50; // e.g. 25 names × 2 sets
+const LIST_KEYS = ["player_name", "set_name", "parallel_name", "grade", "ac_number", "cert_number", "set_number", "tag"] as const;
 
 type SingleFilters = { [K in keyof CardFilters]: CardFilters[K] extends string | string[] | undefined ? string : CardFilters[K] };
 
@@ -208,17 +208,21 @@ function expand(filters: CardFilters): SingleFilters[] {
     }
     combos = combos.flatMap((c) => values.map((val) => ({ ...c, [key]: val })));
   }
-  if (combos.length > MAX_QUERIES) {
-    throw new Error(`That request needs ${combos.length} separate searches; the limit is ${MAX_QUERIES}. Use fewer names or sets per run.`);
-  }
   return combos as SingleFilters[];
+}
+
+/** Run every search (no cap), a few at a time so Metabase isn't flooded. Results keep their order. */
+export async function inBatches<T, R>(items: T[], size: number, fn: (x: T) => Promise<R>): Promise<R[]> {
+  const out: R[] = [];
+  for (let i = 0; i < items.length; i += size) out.push(...(await Promise.all(items.slice(i, i + size).map(fn))));
+  return out;
 }
 
 export type QueryResult = { rows: CardRow[]; missing: { key: string; value: string }[] };
 
 export async function queryCardsDetailed(filters: CardFilters, post: PostFilters = {}): Promise<QueryResult> {
   const combos = expand(filters);
-  const results = await Promise.all(combos.map((c) => queryOnce(c as CardFilters, post)));
+  const results = await inBatches(combos, 8, (c) => queryOnce(c as CardFilters, post));
   const byId = new Map<string, CardRow>();
   for (const rows of results) for (const r of rows) byId.set(r.item_id, r);
 
@@ -286,6 +290,7 @@ async function queryOnce(filters: CardFilters, post: PostFilters = {}): Promise<
   if (typeof filters.ac_number === "string") rows = rows.filter((r) => r.ac_number === filters.ac_number);
   if (typeof filters.cert_number === "string") rows = rows.filter((r) => r.cert_number === filters.cert_number);
   if (post.current_tag_exact) rows = rows.filter((r) => r.tag === post.current_tag_exact);
+  if (post.current_tags_exact?.length) { const want = new Set(post.current_tags_exact.map((t) => t.toLowerCase())); rows = rows.filter((r) => !!r.tag && want.has(r.tag.toLowerCase())); }
   return rows;
 }
 

@@ -76,3 +76,21 @@ Everyone signed in has full access (search, tag, undo). **admin** also gets the 
 - **Add a person:** Users → Add person → send the invite link (works once, 48 hours).
 - **Admin login:** each person can be linked to their own Arena admin login (found from their email, or "link by email" / "paste ID"). Linked people's tags are written as them in admin; unlinked people write through `ADMIN_SESSION_USER_ID` (their name is still on every run). "test" checks admin accepts the login; a 403 mentioning MFA means set `ADMIN_SESSION_MFA_DONE=true`.
 - **New database:** set `SETUP_CODE`, open the app, create the first admin, then delete `SETUP_CODE`.
+
+## Watches
+
+The Cards / Watches toggle switches the source. Watches read Metabase question **45046** (`WATCH_METABASE_CARD_ID`). 45046's SQL ends in `LIMIT 5000` (newest first), so TAG-BOT never pulls it unfiltered when it can avoid it: every word typed is sent through 45046's own filters (Tag, Brand, Model; numbers through PO #, Order #, Reference #), which run inside the SQL before the limit, and the results are merged. The request is then matched against the real values in it: brand (and nicknames like AP, Patek, speedy), model, reference number, dial color, year, condition, value range and current tag. Columns are found by name (BRAND, MODEL, REFERENCE, DIAL_COLOR, SERIAL, YEAR, CONDITION, ESTIMATED_VALUE, TAG, any *_PICTURE_URL / IMAGE column, and the item id as ITEM_ID).
+
+Watch tags are written with `PATCH {ADMIN_API_URL}{WATCH_TAG_PATH}` and body `{"tag": ...}`. Until `WATCH_TAG_PATH` is set, watch runs only work as dry runs. Runs record `kind` (card / watch) so undo uses the right path.
+
+## Searching by tag
+
+Type tag names to find what has them, on Cards or Watches: `sd_rookie_grail`, or several, `sd_rookie_grail, sd_wemby_grail`. Matching is exact (sd_grail does not match sd_grail_2). With only tag names typed, the screen opens on **Remove tag**; switch to **Add tag** to retag them. Combine with other filters: `wembanyama tagged sd_rookie_grail as sd_wemby_grail`, `remove tags vip_ship and sd_watch_grail`. Tags that nothing has are listed as "Nothing found for …".
+
+## No limits on searching
+
+- Every search value runs as its own Metabase query (8 at a time); there is no cap on how many.
+- Every match is returned to the screen (it shows 240 at a time with "show more"; all matches stay selected).
+- Words that aren't a player, set or parallel are also tried as a **tag** on Cards (and as Tag / Brand / Model on Watches), so plain tags like `vookum` work.
+- The only cap left is on writes: `MAX_ITEMS_PER_RUN`. Raise it in Vercel for bigger runs.
+- A watch search with nothing to send through a filter (e.g. only "blue dial over $40k") pulls 45046 whole, which its SQL caps at 5,000; the screen says so. Removing `LIMIT 5000` from 45046 fixes that case too.

@@ -130,10 +130,60 @@ export function extractIds(text: string) {
   return { ac: [...ac], cert: [...cert], rest: t.trim() };
 }
 
+// Tag names in a request (snake_case or #tag). Which are the NEW tag and which are CURRENT tags to search for:
+//  "... as new_tag" / "... to new_tag"          -> new_tag is the new tag; any others are current tags
+//  "remove / clear / untag ..."                   -> every tag named is a current tag to search for
+//  "tag wemby psa 10 sd_x" (other filters, no as) -> last tag is the new tag (as before)
+//  "sd_a, sd_b" (only tags)                       -> search cards that have sd_a or sd_b (action defaults to remove)
+const NOT_TAG = new Set(["well", "is", "are", "the", "a", "an", "follows", "before", "usual", "needed", "one", "such", "much", "many", "soon", "possible"]);
+/** "tag speedmaster as moonwatch" -> "... as #moonwatch" (a tag doesn't need an underscore). */
+export function markPlainTag(text: string) {
+  return text.replace(/\b(as|new tag)\s+([A-Za-z][A-Za-z0-9]*)(?=\s*(?:$|[,.;!]))/gi, (m, w1, w2) => (NOT_TAG.has(w2.toLowerCase()) ? m : `${w1} #${w2}`));
+}
+
+export function readTags(text: string, action: string, hasOtherFilters: boolean) {
+  const raw = text.replace(/[’']/g, "'");
+  const norm = (w: string) => w.toLowerCase().replace(/-/g, "_").replace(/[^a-z0-9_]/g, "");
+  const toks: string[] = [];
+  for (const m of raw.matchAll(/#([A-Za-z0-9_-]+)|\b([A-Za-z0-9]*_[A-Za-z0-9_]+)\b/g)) {
+    const t = norm(m[1] ?? m[2]);
+    if (t && /[a-z]/.test(t) && !toks.includes(t)) toks.push(t);
+  }
+  // the new tag is a tag name right after "as / to / into / new tag" (the last such one wins: "x as well as y as new_tag")
+  const targets = [...raw.matchAll(/\b(?:as|to|into|new tag)\s*[:=]?\s*#?([A-Za-z0-9_-]+)\b/gi)].map((m) => norm(m[1])).filter((t) => toks.includes(t));
+  const target = targets.length ? targets[targets.length - 1] : null;
+  // a current tag is named right after "tagged / tags / with tag / have tag / currently / from", alone or in a list of tags
+  const LIST = "(?:#?[a-z0-9]*_[a-z0-9_]+[\\s,]*(?:and|or|&)?[\\s,]*)*";
+  const tagCtx = (t: string) => new RegExp(`\\b(tagged|tags|with(?: the)? tag|ha(?:ve|s)(?: the)? tag|currently|from tag)[\\s:#,]*${LIST}#?${t}\\b`, "i").test(raw);
+  if (action === "clear") return { action, newTag: null as string | null, current: toks };
+  if (target) return { action, newTag: target, current: toks.filter((t) => t !== target) };
+  if (!toks.length) return { action, newTag: null, current: [] as string[] };
+  // a new tag without "as" ("tag wemby psa 10 sd_x") only when the request starts with a command word;
+  // otherwise every tag name typed is one to search for ("vookum, vip_ship", "wembanyama sd_rookie_grail")
+  const command = /^\s*(tag|add|set|give|put|apply|mark|label|retag)\b/i.test(raw);
+  if (hasOtherFilters && command) {
+    const ctx = toks.filter(tagCtx);
+    const rest = toks.filter((t) => !ctx.includes(t));
+    if (rest.length) return { action, newTag: rest[rest.length - 1], current: [...ctx, ...rest.slice(0, -1)] };
+    return { action, newTag: null, current: ctx };
+  }
+  // only tag names (or tags plus other words, no command): find what has them, ready to remove (switch to Add tag to retag them)
+  return { action: hasOtherFilters ? action : "clear", newTag: null, current: toks };
+}
+
 export function parseRequest(text: string, lex) {
   LEX = lex; // readRequest is synchronous, so this is safe per call
   const ids = extractIds(text);
   const p = readRequest(ids.rest);
+  {
+    const others = Object.keys(p.filters).filter((k) => k !== "tag").length > 0 || ids.ac.length > 0 || ids.cert.length > 0;
+    const t = readTags(text, p.action, others);
+    p.action = t.action;
+    p.tag = t.newTag;
+    delete p.filters.tag;
+    if (t.current.length) p.filters.tag = t.current.length === 1 ? t.current[0] : t.current;
+    p.current_tags = t.current;
+  }
   if (ids.ac.length || ids.cert.length) {
     // An exact card number beats guessed names: drop name guesses, keep the rest of the filters.
     delete p.filters.player_name;
@@ -141,8 +191,9 @@ export function parseRequest(text: string, lex) {
     if (ids.cert.length) p.filters.cert_number = ids.cert.length === 1 ? ids.cert[0] : ids.cert;
   }
   const filters = Object.fromEntries(Object.entries(p.filters).filter(([, v]) => v != null && v !== ""));
-  const post: Record<string, boolean> = {};
+  const post: Record<string, unknown> = {};
   if (filters.parallel_name === "__base__") { delete filters.parallel_name; post.only_base = true; }
+  if (p.current_tags?.length) post.current_tags_exact = p.current_tags;
   return { action: p.action, tag: p.tag, mode: p.mode, filters, post_filters: post };
 }
 

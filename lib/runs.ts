@@ -4,6 +4,7 @@ import { randomBytes } from "crypto";
 import { config, validateTag } from "./config";
 import { queryCards, queryCardsDetailed, summarize, type CardFilters, type CardRow, type PostFilters } from "./metabase";
 import { openAdminSession, patchTag, type WriteResult } from "./admin";
+import { searchWatches, watchLabel, type WatchRow } from "./watches";
 import { q } from "./db";
 
 type Run = {
@@ -19,12 +20,13 @@ type Run = {
   dry_run: boolean | null;
   undo_of: string | null;
   expires_at: string;
+  kind: "card" | "watch";
 };
 
 const newId = () => "r_" + randomBytes(5).toString("hex");
 const hoursFromNow = (h: number) => new Date(Date.now() + h * 3600_000).toISOString();
 
-function applyMode(rows: CardRow[], action: "set" | "clear", tag: string | null, mode: string) {
+function applyMode<T extends { tag: string | null }>(rows: T[], action: "set" | "clear", tag: string | null, mode: string) {
   // Drop no-ops, and (in skip_tagged mode) anything that already carries a different tag.
   return rows.filter((r) => {
     if (action === "clear") return !!r.tag;
@@ -168,12 +170,13 @@ async function executeWrites(
   runId: string,
   items: { item_id: string; target: string | null }[],
   okStatus: string,
-  adminUserId?: string
+  adminUserId?: string,
+  kind: "card" | "watch" = "card"
 ) {
   const session = await openAdminSession(adminUserId);
   let results: WriteResult[];
   try {
-    results = await pool(items, config.writeConcurrency(), (it) => patchTag(session, it.item_id, it.target));
+    results = await pool(items, config.writeConcurrency(), (it) => patchTag(session, it.item_id, it.target, kind));
   } finally {
     await session.revoke();
   }
@@ -221,6 +224,10 @@ export async function goLive(input: { run_id: string; confirm: boolean; approved
     [run.id, input.approved_by, dry, input.as_admin_user_id ?? null]
   );
   if (!claimed) throw new Error(`Run is ${run.status}; only a staged run can go live, and only once.`);
+  if (!dry && run.kind === "watch" && !config.watchTagPath()) {
+    await q(`UPDATE tag_runs SET status='staged' WHERE id=$1`, [run.id]);
+    throw new Error("Watch tags can't be written yet: set WATCH_TAG_PATH in Vercel (the admin path that saves a watch's tag). Dry runs work now.");
+  }
 
   const items = await q<{ item_id: string }>(`SELECT item_id FROM tag_run_items WHERE run_id=$1 AND status='pending'`, [run.id]);
 
@@ -231,7 +238,7 @@ export async function goLive(input: { run_id: string; confirm: boolean; approved
     return { run_id: run.id, status: "dry_run_completed", ...result, note: "DRY_RUN is on. Nothing was written to admin." };
   }
 
-  const res = await executeWrites(run.id, items.map((i) => ({ item_id: i.item_id, target: run.tag })), "written", input.as_admin_user_id);
+  const res = await executeWrites(run.id, items.map((i) => ({ item_id: i.item_id, target: run.tag })), "written", input.as_admin_user_id, run.kind);
   const status = res.failed || res.mismatch ? "partial" : "completed";
   await q(`UPDATE tag_runs SET status=$2, finished_at=now(), result=$3 WHERE id=$1`, [run.id, status, JSON.stringify(res)]);
   return {
@@ -257,16 +264,16 @@ export async function undoRun(input: { run_id: string; confirm: boolean; request
   );
   const undoId = newId();
   await q(
-    `INSERT INTO tag_runs (id, status, action, tag, mode, filters, post_filters, requested_by, preview_count, approved_by, live_at, dry_run, undo_of, expires_at)
-     VALUES ($1,'executing','undo',NULL,'overwrite','{}','{}',$2,$3,$2,now(),false,$4,now())`,
-    [undoId, input.requested_by, items.length, run.id]
+    `INSERT INTO tag_runs (id, status, action, tag, mode, filters, post_filters, requested_by, preview_count, approved_by, live_at, dry_run, undo_of, expires_at, kind)
+     VALUES ($1,'executing','undo',NULL,'overwrite','{}','{}',$2,$3,$2,now(),false,$4,now(),$5)`,
+    [undoId, input.requested_by, items.length, run.id, run.kind]
   );
   await q(
     `INSERT INTO tag_run_items (run_id, item_id, previous_tag, new_tag)
      SELECT $1, t.item_id, $2, t.prev FROM unnest($3::text[], $4::text[]) AS t(item_id, prev)`,
     [undoId, run.tag, items.map((i) => i.item_id), items.map((i) => i.previous_tag)]
   );
-  const res = await executeWrites(undoId, items.map((i) => ({ item_id: i.item_id, target: i.previous_tag })), "restored", input.as_admin_user_id);
+  const res = await executeWrites(undoId, items.map((i) => ({ item_id: i.item_id, target: i.previous_tag })), "restored", input.as_admin_user_id, run.kind);
   const status = res.failed || res.mismatch ? "partial" : "completed";
   await q(`UPDATE tag_runs SET status=$2, finished_at=now(), result=$3 WHERE id=$1`, [undoId, status, JSON.stringify(res)]);
   await q(`UPDATE tag_runs SET status='undone' WHERE id=$1 AND $2 = 'completed'`, [run.id, status]);
@@ -308,7 +315,7 @@ export async function getRun(runId: string) {
 
 export async function listRuns(limit = 20) {
   return q(
-    `SELECT id, status, action, tag, requested_by, staged_by, approved_by, preview_count, staged_count, dry_run, undo_of, created_at, finished_at
+    `SELECT id, kind, status, action, tag, requested_by, staged_by, approved_by, preview_count, staged_count, dry_run, undo_of, created_at, finished_at
      FROM tag_runs ORDER BY created_at DESC LIMIT $1`,
     [Math.min(Math.max(limit, 1), 100)]
   );
@@ -367,6 +374,50 @@ export async function runSelection(input: {
       chosen.map((r) => [r.ac_number, r.set_name, r.player_name, r.parallel_name, r.grade].filter(Boolean).join(" · ")),
       chosen.map((r) => r.estimated_value),
     ]
+  );
+  const result = await goLive({ run_id: id, confirm: true, approved_by: input.user, dry_run: input.dry_run, as_admin_user_id: input.as_admin_user_id });
+  return { ...result, skipped_no_longer_matching: dropped, previous: Object.fromEntries(chosen.map((r) => [r.item_id, r.tag])) };
+}
+
+// ---------- Watches: same one-step confirm, re-checked against a fresh pull of the watches question ----------
+export async function runWatchSelection(input: {
+  text: string;
+  action: "set" | "clear";
+  tag?: string | null;
+  mode?: "overwrite" | "skip_tagged";
+  item_ids: string[];
+  dry_run?: boolean;
+  user: string;
+  as_admin_user_id?: string;
+}) {
+  const action = input.action;
+  const tag = action === "clear" ? null : (input.tag ?? "").trim();
+  if (action === "set") {
+    const err = validateTag(tag as string);
+    if (err) throw new Error(err);
+  }
+  const wanted = [...new Set(input.item_ids)];
+  if (!wanted.length) throw new Error("No watches selected.");
+  if (wanted.length > config.maxItemsPerRun()) throw new Error(`${wanted.length} watches is over the ${config.maxItemsPerRun()}-item limit.`);
+
+  const fresh = await searchWatches(input.text);
+  const rows = applyMode(fresh.rows, action, tag, input.mode ?? "overwrite");
+  const byId = new Map(rows.map((r) => [r.item_id, r]));
+  const chosen = wanted.map((id) => byId.get(id)).filter((r): r is WatchRow => !!r);
+  const dropped = wanted.length - chosen.length;
+  if (!chosen.length) throw new Error("None of the selected watches still match. Search again.");
+
+  const id = newId();
+  await q(
+    `INSERT INTO tag_runs (id, status, action, tag, mode, filters, post_filters, requested_by, preview_count, staged_by, staged_at, staged_count, expires_at, kind)
+     VALUES ($1,'staged',$2,$3,$4,$5,'{}',$6,$7,$6,now(),$7,$8,'watch')`,
+    [id, action, tag, input.mode ?? "overwrite", JSON.stringify({ text: input.text, ...fresh.parsed.filters }), input.user, chosen.length, hoursFromNow(1)]
+  );
+  await q(
+    `INSERT INTO tag_run_items (run_id, item_id, previous_tag, new_tag, label, ev)
+     SELECT $1, t.item_id, t.prev, $2, t.label, t.ev
+     FROM unnest($3::text[], $4::text[], $5::text[], $6::numeric[]) AS t(item_id, prev, label, ev)`,
+    [id, tag, chosen.map((r) => r.item_id), chosen.map((r) => r.tag), chosen.map(watchLabel), chosen.map((r) => r.ev)]
   );
   const result = await goLive({ run_id: id, confirm: true, approved_by: input.user, dry_run: input.dry_run, as_admin_user_id: input.as_admin_user_id });
   return { ...result, skipped_no_longer_matching: dropped, previous: Object.fromEntries(chosen.map((r) => [r.item_id, r.tag])) };
