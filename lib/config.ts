@@ -29,6 +29,10 @@ export const config = {
   supertokensUri: () => req("SUPERTOKENS_CONNECTION_URI"),
   supertokensApiKey: () => req("SUPERTOKENS_API_KEY"),
   sessionUserId: () => req("ADMIN_SESSION_USER_ID"),
+  // Tell admin that MFA is complete on minted sessions (needed for people who have MFA on in admin).
+  mfaDone: () => (process.env.ADMIN_SESSION_MFA_DONE ?? "").toLowerCase() === "true",
+  // People not linked to their own admin login write through ADMIN_SESSION_USER_ID. Set false to require linking.
+  sharedSessionFallback: () => (process.env.SHARED_SESSION_FALLBACK ?? "true").toLowerCase() !== "false",
   sessionTenantId: () => process.env.ADMIN_SESSION_TENANT_ID || "public",
   // Optional JSON merged into the minted access-token payload (only if admin rejects plain sessions)
   sessionExtraPayload: (): Record<string, unknown> | undefined => {

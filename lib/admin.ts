@@ -7,6 +7,7 @@ import Session from "supertokens-node/recipe/session";
 import { config } from "./config";
 
 let initialized = false;
+export const initSupertokens = () => init();
 function init() {
   if (initialized) return;
   supertokens.init({
@@ -25,12 +26,13 @@ function init() {
 
 export type AdminSession = { accessToken: string; revoke: () => Promise<void> };
 
-export async function openAdminSession(): Promise<AdminSession> {
+/** Mints a short-lived admin session as this admin user (the person doing the run). */
+export async function openAdminSession(adminUserId: string = config.sessionUserId()): Promise<AdminSession> {
   init();
   const session = await Session.createNewSessionWithoutRequestResponse(
     config.sessionTenantId(),
-    supertokens.convertToRecipeUserId(config.sessionUserId()),
-    config.sessionExtraPayload() ?? {},
+    supertokens.convertToRecipeUserId(adminUserId),
+    { ...(config.mfaDone() ? { "st-mfa": { c: {}, v: true } } : {}), ...(config.sessionExtraPayload() ?? {}) },
     {},
     true // no anti-CSRF token; admin uses the rid header instead
   );
@@ -113,5 +115,21 @@ export async function checkAuth(itemId: string) {
     return { status: res.status, ok: res.ok, card_tag_field: tag, body_preview: res.ok ? undefined : text.slice(0, 300) };
   } finally {
     await session.revoke();
+  }
+}
+
+// Does admin accept a session for this admin user? Asks for a card id that can't exist:
+// 404 means the login was accepted, 401/403 means admin refused it. Writes nothing.
+export async function adminAccess(adminUserId: string) {
+  let session: AdminSession | null = null;
+  try {
+    session = await openAdminSession(adminUserId);
+    const res = await fetch(`${config.adminApiUrl()}/cards/00000000-0000-0000-0000-000000000000`, { headers: headers(session.accessToken) });
+    const refused = res.status === 401 || res.status === 403;
+    return { ok: !refused, status: res.status, detail: refused ? (await res.text()).slice(0, 300) : undefined };
+  } catch (e) {
+    return { ok: false, status: 0, detail: e instanceof Error ? e.message : String(e) };
+  } finally {
+    if (session) await session.revoke();
   }
 }

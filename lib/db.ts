@@ -58,6 +58,25 @@ async function ensureSchema() {
           updated_at    timestamptz NOT NULL DEFAULT now(),
           PRIMARY KEY (run_id, item_id)
         )`);
+      await s.query(`ALTER TABLE tag_runs ADD COLUMN IF NOT EXISTS admin_as text`);
+      // Same table as ev-bot: point DATABASE_URL at ev-bot's Neon database and everyone's ev-bot login works here.
+      await s.query(`
+        CREATE TABLE IF NOT EXISTS ev_users (
+          id                text PRIMARY KEY,
+          email             text NOT NULL UNIQUE,
+          name              text NOT NULL,
+          role              text NOT NULL,      -- viewer | editor | approver | admin
+          admin_user_id     text,               -- their own Arena admin login (SuperTokens user id)
+          pw_hash           text,
+          invite_hash       text,
+          invite_expires_at timestamptz,
+          mcp_key_hash      text,
+          active            boolean NOT NULL DEFAULT true,
+          created_by        text,
+          created_at        timestamptz NOT NULL DEFAULT now(),
+          last_login_at     timestamptz
+        )`);
+      await s.query(`ALTER TABLE ev_users ADD COLUMN IF NOT EXISTS admin_email text`);
       await s.query(`
         CREATE TABLE IF NOT EXISTS saved_prompts (
           id          text PRIMARY KEY,

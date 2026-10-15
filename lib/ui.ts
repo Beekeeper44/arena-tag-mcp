@@ -1,39 +1,6 @@
-// Web app helpers: sign-in, the card-name lexicon, saved prompts.
-import { createHmac, randomBytes, timingSafeEqual } from "crypto";
-import { config } from "./config";
+// Saved prompts, shared by the team. (Sign-in lives in users.ts.)
+import { randomBytes } from "crypto";
 import { q } from "./db";
-
-// ---------- sign-in ----------
-// One team password (APP_PASSWORD). The cookie holds the person's name + an HMAC so it can't be forged.
-const COOKIE = "tb_session";
-const secret = () => `${config.mcpAccessKey()}::${process.env.APP_PASSWORD ?? ""}`;
-const mac = (v: string) => createHmac("sha256", secret()).update(v).digest("base64url");
-
-export const passwordRequired = () => !!process.env.APP_PASSWORD;
-
-// With no APP_PASSWORD set, sign-in is name only (the name is what runs are logged under).
-export function checkPassword(pw: string): boolean {
-  const want = process.env.APP_PASSWORD;
-  if (!want) return true;
-  const a = Buffer.from(pw), b = Buffer.from(want);
-  return a.length === b.length && timingSafeEqual(a, b);
-}
-
-export function sessionCookie(name: string): string {
-  const v = Buffer.from(name.slice(0, 60)).toString("base64url");
-  return `${COOKIE}=${v}.${mac(v)}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${60 * 60 * 24 * 30}`;
-}
-export const clearCookie = () => `${COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0`;
-
-export function currentUser(req: Request): string | null {
-  const raw = (req.headers.get("cookie") || "").split(/;\s*/).find((c) => c.startsWith(COOKIE + "="));
-  if (!raw) return null;
-  const [v, sig] = raw.slice(COOKIE.length + 1).split(".");
-  if (!v || !sig) return null;
-  const good = mac(v);
-  if (good.length !== sig.length || !timingSafeEqual(Buffer.from(good), Buffer.from(sig))) return null;
-  return Buffer.from(v, "base64url").toString();
-}
 
 // ---------- saved prompts (shared by the team) ----------
 export const listPrompts = () =>

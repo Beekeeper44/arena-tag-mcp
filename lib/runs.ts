@@ -167,9 +167,10 @@ export async function stageRun(input: { run_id: string; confirm_count: number; s
 async function executeWrites(
   runId: string,
   items: { item_id: string; target: string | null }[],
-  okStatus: string
+  okStatus: string,
+  adminUserId?: string
 ) {
-  const session = await openAdminSession();
+  const session = await openAdminSession(adminUserId);
   let results: WriteResult[];
   try {
     results = await pool(items, config.writeConcurrency(), (it) => patchTag(session, it.item_id, it.target));
@@ -207,7 +208,7 @@ async function executeWrites(
   };
 }
 
-export async function goLive(input: { run_id: string; confirm: boolean; approved_by: string; dry_run?: boolean }) {
+export async function goLive(input: { run_id: string; confirm: boolean; approved_by: string; dry_run?: boolean; as_admin_user_id?: string }) {
   if (input.confirm !== true) throw new Error("confirm must be true.");
   const run = await loadRun(input.run_id);
   if (new Date(run.expires_at) < new Date()) throw new Error("Staged run expired. Run a new preview.");
@@ -215,9 +216,9 @@ export async function goLive(input: { run_id: string; confirm: boolean; approved
 
   // Atomic claim: only one caller can move staged -> executing.
   const [claimed] = await q(
-    `UPDATE tag_runs SET status='executing', approved_by=$2, live_at=now(), dry_run=$3
+    `UPDATE tag_runs SET status='executing', approved_by=$2, live_at=now(), dry_run=$3, admin_as=$4
      WHERE id=$1 AND status='staged' RETURNING id`,
-    [run.id, input.approved_by, dry]
+    [run.id, input.approved_by, dry, input.as_admin_user_id ?? null]
   );
   if (!claimed) throw new Error(`Run is ${run.status}; only a staged run can go live, and only once.`);
 
@@ -230,7 +231,7 @@ export async function goLive(input: { run_id: string; confirm: boolean; approved
     return { run_id: run.id, status: "dry_run_completed", ...result, note: "DRY_RUN is on. Nothing was written to admin." };
   }
 
-  const res = await executeWrites(run.id, items.map((i) => ({ item_id: i.item_id, target: run.tag })), "written");
+  const res = await executeWrites(run.id, items.map((i) => ({ item_id: i.item_id, target: run.tag })), "written", input.as_admin_user_id);
   const status = res.failed || res.mismatch ? "partial" : "completed";
   await q(`UPDATE tag_runs SET status=$2, finished_at=now(), result=$3 WHERE id=$1`, [run.id, status, JSON.stringify(res)]);
   return {
@@ -244,7 +245,7 @@ export async function goLive(input: { run_id: string; confirm: boolean; approved
 }
 
 // ---------- Undo: restore each card's previous tag ----------
-export async function undoRun(input: { run_id: string; confirm: boolean; requested_by: string }) {
+export async function undoRun(input: { run_id: string; confirm: boolean; requested_by: string; as_admin_user_id?: string }) {
   if (input.confirm !== true) throw new Error("confirm must be true.");
   const run = await loadRun(input.run_id);
   if (!["completed", "partial"].includes(run.status)) throw new Error(`Run is ${run.status}; only completed or partial runs can be undone.`);
@@ -265,7 +266,7 @@ export async function undoRun(input: { run_id: string; confirm: boolean; request
      SELECT $1, t.item_id, $2, t.prev FROM unnest($3::text[], $4::text[]) AS t(item_id, prev)`,
     [undoId, run.tag, items.map((i) => i.item_id), items.map((i) => i.previous_tag)]
   );
-  const res = await executeWrites(undoId, items.map((i) => ({ item_id: i.item_id, target: i.previous_tag })), "restored");
+  const res = await executeWrites(undoId, items.map((i) => ({ item_id: i.item_id, target: i.previous_tag })), "restored", input.as_admin_user_id);
   const status = res.failed || res.mismatch ? "partial" : "completed";
   await q(`UPDATE tag_runs SET status=$2, finished_at=now(), result=$3 WHERE id=$1`, [undoId, status, JSON.stringify(res)]);
   await q(`UPDATE tag_runs SET status='undone' WHERE id=$1 AND $2 = 'completed'`, [run.id, status]);
@@ -326,6 +327,7 @@ export async function runSelection(input: {
   queries?: CardFilters[]; // the exact 4131 searches the screen ran; re-run fresh before writing
   dry_run?: boolean;
   user: string;
+  as_admin_user_id?: string; // write as this person's own admin login
 }) {
   const action = input.action;
   const tag = action === "clear" ? null : (input.tag ?? "").trim();
@@ -366,6 +368,6 @@ export async function runSelection(input: {
       chosen.map((r) => r.estimated_value),
     ]
   );
-  const result = await goLive({ run_id: id, confirm: true, approved_by: input.user, dry_run: input.dry_run });
+  const result = await goLive({ run_id: id, confirm: true, approved_by: input.user, dry_run: input.dry_run, as_admin_user_id: input.as_admin_user_id });
   return { ...result, skipped_no_longer_matching: dropped, previous: Object.fromEntries(chosen.map((r) => [r.item_id, r.tag])) };
 }

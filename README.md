@@ -2,7 +2,7 @@
 
 Two ways in, same engine, same Neon run log:
 
-- **Tag Bot screen** at `https://<project>.vercel.app/`: sign in with your name (plus `APP_PASSWORD` if you set one), type a request, see the matching slabs, deselect any, **Confirm tags**, then Undo if needed. Saved prompts are shared by everyone who signs in.
+- **TAG-BOT screen** at `https://<project>.vercel.app/`: sign in with email + password (same accounts as ev-bot when `DATABASE_URL` is ev-bot's Neon database), type a request, see the matching slabs, deselect any, **Confirm tags**, then Undo if needed. Saved prompts are shared by everyone who signs in.
 - **Claude connector** at `/api/mcp?key=<MCP_ACCESS_KEY>`: the same actions from a Claude chat.
 
 Every search on the screen queries question 4131 fresh (no cache) using its own filters: each name you type goes into the player filter (then set, then parallel if nothing matches), AC/cert numbers go into the number filters, so only matching cards come back. Confirm re-runs those same searches before writing.
@@ -66,3 +66,13 @@ A card holds **one** tag. Setting a tag replaces the current one. Previous tags 
 > Tag all Wembanyama Prizm Ruby Wave PSA 10s between $200 and $1,000 as sd_wemby_grail. Skip cards that already have a tag.
 
 Claude previews and shows the count. You confirm the number, and it stages. You say go live, and it writes and reports. Later: "verify run r_…" or "undo run r_…".
+
+## People
+
+Accounts live in Neon table `ev_users`, the same table ev-bot uses. Point `DATABASE_URL` at ev-bot's database and everyone's ev-bot login works here; roles are shared too.
+
+Everyone signed in has full access (search, tag, undo). **admin** also gets the Users tab. Same roles as ev-bot: `member` and `admin`.
+
+- **Add a person:** Users → Add person → send the invite link (works once, 48 hours).
+- **Admin login:** each person can be linked to their own Arena admin login (found from their email, or "link by email" / "paste ID"). Linked people's tags are written as them in admin; unlinked people write through `ADMIN_SESSION_USER_ID` (their name is still on every run). "test" checks admin accepts the login; a 403 mentioning MFA means set `ADMIN_SESSION_MFA_DONE=true`.
+- **New database:** set `SETUP_CODE`, open the app, create the first admin, then delete `SETUP_CODE`.

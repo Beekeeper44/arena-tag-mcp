@@ -2,7 +2,11 @@
 import { config } from "@/lib/config";
 import { type CardFilters, type PostFilters } from "@/lib/metabase";
 import { runSelection, undoRun, listRuns } from "@/lib/runs";
-import { passwordRequired, checkPassword, sessionCookie, clearCookie, currentUser, listPrompts, addPrompt, renamePrompt, deletePrompt } from "@/lib/ui";
+import { listPrompts, addPrompt, renamePrompt, deletePrompt } from "@/lib/ui";
+import {
+  can, type Role, type User, currentUser, sessionCookie, clearCookie, needsSetup, login, setupFirstAdmin, inviteInfo, acceptInvite,
+  changePassword, adminLoginFor, listUsers, addUser, updateUser, resetInvite, relinkAdmin, testAdmin,
+} from "@/lib/users";
 import { smartSearch } from "@/lib/search";
 
 export const maxDuration = 300;
@@ -12,16 +16,24 @@ const json = (data: unknown, status = 200, headers: Record<string, string> = {})
 const fail = (e: unknown, status = 400) => json({ error: e instanceof Error ? e.message : String(e) }, status);
 
 type Ctx = { params: Promise<{ action: string }> };
+const forbid = (u: User, need: Role) =>
+  can(u, need) ? null : json({ error: "Only TAG-BOT admins can do that." }, 403);
+const origin = (req: Request) => new URL(req.url).origin;
 
 export async function GET(req: Request, ctx: Ctx) {
   const { action } = await ctx.params;
-  if (action === "config") return json({ password_required: passwordRequired() });
-  const user = currentUser(req);
-  if (!user) return json({ error: "signed_out" }, 401);
   try {
+    if (action === "config") return json({ needs_setup: await needsSetup() });
+    const u = await currentUser(req);
+    if (!u) return json({ error: "signed_out" }, 401);
     switch (action) {
       case "me":
-        return json({ user, dry_run: config.dryRun(), max_items_per_run: config.maxItemsPerRun() });
+        return json({
+          id: u.id, user: u.name, email: u.email, role: u.role, is_admin: can(u, "admin"), can_write: true,
+          linked: !!u.admin_user_id, dry_run: config.dryRun(), max_items_per_run: config.maxItemsPerRun(),
+        });
+      case "users":
+        return forbid(u, "admin") ?? json(await listUsers());
       case "runs":
         return json(await listRuns(15));
       case "prompts":
@@ -43,20 +55,29 @@ export async function POST(req: Request, ctx: Ctx) {
     /* empty body */
   }
 
-  if (action === "login") {
-    try {
-      const name = String(body.name ?? "").trim();
-      if (!name) return json({ error: "Enter your name." }, 400);
-      if (!checkPassword(String(body.password ?? ""))) return json({ error: "Wrong password." }, 401);
-      return json({ user: name }, 200, { "Set-Cookie": sessionCookie(name) });
-    } catch (e) {
-      return fail(e, 500);
-    }
-  }
+  const str = (k: string) => String(body[k] ?? "").trim();
   if (action === "logout") return json({ ok: true }, 200, { "Set-Cookie": clearCookie() });
+  try {
+    if (action === "login") {
+      const u = await login(str("email"), String(body.password ?? ""));
+      return json({ user: u.name }, 200, { "Set-Cookie": sessionCookie(u.id) });
+    }
+    if (action === "setup") {
+      const id = await setupFirstAdmin({ name: str("name"), email: str("email"), password: String(body.password ?? ""), code: str("code") });
+      return json({ ok: true }, 200, { "Set-Cookie": sessionCookie(id) });
+    }
+    if (action === "invite-info") return json(await inviteInfo(str("token")));
+    if (action === "invite-accept") {
+      const u = await acceptInvite(str("token"), String(body.password ?? ""));
+      return json({ user: u.name }, 200, { "Set-Cookie": sessionCookie(u.id) });
+    }
+  } catch (e) {
+    return fail(e);
+  }
 
-  const user = currentUser(req);
+  const user = await currentUser(req);
   if (!user) return json({ error: "signed_out" }, 401);
+  const u = user;
 
   try {
     switch (action) {
@@ -94,19 +115,51 @@ export async function POST(req: Request, ctx: Ctx) {
             item_ids: Array.isArray(body.item_ids) ? (body.item_ids as string[]) : [],
             queries: Array.isArray(body.queries) ? (body.queries as CardFilters[]) : undefined,
             dry_run: body.dry_run === true,
-            user,
+            user: u.name,
+            as_admin_user_id: adminLoginFor(u),
           })
         );
       case "undo":
-        return json(await undoRun({ run_id: String(body.run_id), confirm: true, requested_by: user }));
+        return json(await undoRun({ run_id: str("run_id"), confirm: true, requested_by: u.name, as_admin_user_id: adminLoginFor(u) }));
       case "prompts":
-        return json(await addPrompt(String(body.text ?? ""), user, body.name as string | undefined));
+        return json(await addPrompt(String(body.text ?? ""), u.name, body.name as string | undefined));
       case "prompts-rename":
         await renamePrompt(String(body.id), String(body.name ?? ""));
         return json({ ok: true });
       case "prompts-delete":
         await deletePrompt(String(body.id));
         return json({ ok: true });
+      case "password":
+        await changePassword(u.id, String(body.current ?? ""), String(body.next ?? ""));
+        return json({ ok: true });
+
+      // ---- people (admins) ----
+      case "users-add": {
+        const f = forbid(u, "admin");
+        if (f) return f;
+        const r = await addUser({ email: str("email"), name: str("name"), role: str("role") as Role, admin_user_id: str("admin_user_id") || null }, u);
+        return json({ ...r, invite_url: `${origin(req)}/?invite=${r.invite_token}` });
+      }
+      case "users-update": {
+        const f = forbid(u, "admin");
+        if (f) return f;
+        await updateUser(str("id"), {
+          role: (body.role as Role) || undefined,
+          active: typeof body.active === "boolean" ? body.active : undefined,
+          admin_user_id: body.admin_user_id === undefined ? undefined : String(body.admin_user_id ?? ""),
+        }, u);
+        return json({ ok: true });
+      }
+      case "users-invite": {
+        const f = forbid(u, "admin");
+        if (f) return f;
+        const r = await resetInvite(str("id"));
+        return json({ invite_url: `${origin(req)}/?invite=${r.invite_token}` });
+      }
+      case "users-relink":
+        return forbid(u, "admin") ?? json(await relinkAdmin(str("id"), str("email") || undefined));
+      case "users-test":
+        return forbid(u, "admin") ?? json(await testAdmin(str("id")));
       default:
         return json({ error: "not found" }, 404);
     }
