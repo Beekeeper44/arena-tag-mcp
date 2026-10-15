@@ -139,12 +139,44 @@ async function runWith(param: Param | null, value: string): Promise<WatchRow[]> 
   if (!res.ok) throw new Error(`Metabase watches question ${config.watchCardId()} failed: ${res.status} ${(await res.text()).slice(0, 300)}`);
   const data = await res.json();
   if (!Array.isArray(data)) throw new Error(`Unexpected Metabase response: ${JSON.stringify(data).slice(0, 300)}`);
-  const rows = data.map(toWatch);
-  if (data.length && !rows.some((r) => r.item_id && /^[0-9a-f-]{36}$/i.test(r.item_id))) {
-    throw new Error(`Question ${config.watchCardId()} has no item id column TAG-BOT can use. Add the watch's item id as ITEM_ID.`);
-  }
-  return rows.filter((r) => r.item_id);
+  return withIds(data);
 }
+
+// The item id is found by its values, not its column name: the column (any name) whose values are UUIDs,
+// or contain one (e.g. an admin link). Names with ITEM / ID win ties.
+const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+let idColumn: string | null | undefined; // remembered between searches
+function findIdColumn(data: Record<string, unknown>[]): string | null {
+  const sample = data.slice(0, 200);
+  let best: { key: string; score: number } | null = null;
+  for (const key of Object.keys(sample[0] ?? {})) {
+    let full = 0, inside = 0;
+    for (const r of sample) {
+      const v = String(r[key] ?? "");
+      if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v)) full++;
+      else if (UUID.test(v)) inside++;
+    }
+    if (!full && !inside) continue;
+    const name = K(key);
+    const score = full * 3 + inside + (/ITEM/.test(name) ? 0.6 : 0) + (/(^|_)ID$|UUID/.test(name) ? 0.4 : 0) - (/USER|OWNER|CUSTOMER|ORDER|SELLER|BUYER|TYPE|CONDITION|BRAND|MODEL/.test(name) ? 2 : 0);
+    if (!best || score > best.score) best = { key, score };
+  }
+  return best && best.score > 0 ? best.key : null;
+}
+
+function withIds(data: Record<string, unknown>[]): WatchRow[] {
+  if (!data.length) return [];
+  if (idColumn === undefined || (idColumn && !(idColumn in data[0]))) idColumn = findIdColumn(data);
+  return data.map((raw, i) => {
+    const w = toWatch(raw);
+    const m = idColumn ? String(raw[idColumn] ?? "").match(UUID) : null;
+    // no item id anywhere: still show the watch (keyed by AC / order / row) so searching works; tagging needs the id
+    w.item_id = m ? m[0].toLowerCase() : `noid:${w.ac ?? w.order ?? w.reference ?? i}`;
+    return w;
+  });
+}
+
+export const hasItemIds = (rows: WatchRow[]) => rows.some((r) => !r.item_id.startsWith("noid:"));
 
 /** Words to send through 45046's filters: tag names, words (brand / model / tag), and numbers (PO / order / reference). */
 function searchTerms(text: string) {
@@ -303,7 +335,7 @@ export async function searchWatches(text: string) {
     missing: [...(rows.length ? [] : p.missing), ...(p.filters.tag ?? []).filter((t) => !rows.some((r) => (r.tag ?? "").toLowerCase() === t))],
     inventory: all.length,
     searches: pulled.searches,
-    notice: pulled.notice,
+    notice: [pulled.notice, rows.length && !hasItemIds(rows) ? `Question ${config.watchCardId()} has no item id in its results, so these watches can be searched but not tagged yet. Add the watch's item id (items.id) as a column in ${config.watchCardId()}.` : ""].filter(Boolean).join(" ") || undefined,
   };
 }
 

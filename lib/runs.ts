@@ -406,6 +406,8 @@ export async function runWatchSelection(input: {
   const chosen = wanted.map((id) => byId.get(id)).filter((r): r is WatchRow => !!r);
   const dropped = wanted.length - chosen.length;
   if (!chosen.length) throw new Error("None of the selected watches still match. Search again.");
+  if (chosen.some((r) => r.item_id.startsWith("noid:")))
+    throw new Error(`These watches have no item id in question ${config.watchCardId()}, so they can't be tagged. Add the watch's item id (items.id) as a column in ${config.watchCardId()}.`);
 
   const id = newId();
   await q(
