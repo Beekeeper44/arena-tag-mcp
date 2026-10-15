@@ -221,7 +221,19 @@ function searchTerms(text: string) {
   const toks = t.split(/[\s,]+/).filter(Boolean);
   const words = toks.filter((w) => /^[a-z][a-z.&-]*$/.test(w) && w.length >= 3 && !STOP.has(w) && !COLORS.includes(w));
   const numbers = toks.filter((w) => /\d/.test(w) && w.replace(/[^a-z0-9]/g, "").length >= 3 && !/^(19|20)\d\d$/.test(w) && !/^\d{1,3}(mm)?$/.test(w));
-  return { tags: [...new Set(tags)], words: [...new Set(words)], numbers: [...new Set(numbers)], expanded: t };
+  // whole phrases, case kept, split at command words / punctuation: "Patek Philippe", "Datejust 41", "Black Bay"
+  const cleaned = raw.replace(/#[A-Za-z0-9_-]+/g, " , ").replace(/\b[A-Za-z0-9]*_[A-Za-z0-9_]+\b/g, " , ").replace(/\$\s*[\d,.]+k?\+?/gi, " , ");
+  const phrases: string[] = [];
+  let seg: string[] = [];
+  const flush = () => { for (let n = 1; n <= Math.min(4, seg.length); n++) for (let i = 0; i + n <= seg.length; i++) phrases.push(seg.slice(i, i + n).join(" ")); seg = []; };
+  for (const tok of cleaned.split(/\s+|(?=[,;!?])|(?<=[,;!?])/)) {
+    const w = tok.replace(/^[^A-Za-z0-9]+|[^A-Za-z0-9.&'-]+$/g, "");
+    if (!w || /^[,;!?]$/.test(tok) || STOP.has(w.toLowerCase()) || /^(over|under|between|and|or)$/i.test(w)) { flush(); continue; }
+    seg.push(w);
+  }
+  flush();
+  for (const [a, full] of Object.entries(ALIAS)) if (new RegExp(`(^|[^a-z0-9])${esc(a)}(?=$|[^a-z0-9])`).test(" " + norm(raw) + " ")) phrases.push(full);
+  return { tags: [...new Set(tags)], words: [...new Set(words)], numbers: [...new Set(numbers)], expanded: t, phrases: [...new Set(phrases)] };
 }
 
 /** Which of a filter's values the request names: whole value typed ("patek philippe"), or a typed word that is one
@@ -238,36 +250,58 @@ function pickValues(values: string[], kind: "tag" | "words" | "reference", text:
   });
 }
 
-export async function queryWatches(text = ""): Promise<{ rows: WatchRow[]; searches: number; notice?: string }> {
+// "blue", "ice blue" alone are dial colors, not brands or models ("Black Bay" is a model and still goes through)
+const onlyColor = (ph: string) => { const n = norm(ph); return COLORS.includes(n) || n.split(" ").every((w) => COLORS.includes(w)); };
+const title = (s: string) => s.replace(/\b([a-z])([a-z]*)/gi, (_m, a: string, b: string) => a.toUpperCase() + b.toLowerCase());
+/** Ways a phrase might be stored: as typed, Title Case, lower case, and UPPER for short words (IWC, AP). */
+const variants = (ph: string) => [...new Set([ph, title(ph), ph.toLowerCase(), ...(ph.length <= 4 && !/\s/.test(ph) ? [ph.toUpperCase()] : [])])];
+
+export async function queryWatches(text = ""): Promise<{ rows: WatchRow[]; searches: number; notice?: string; searched: string[] }> {
   const f = await watchFilters();
-  const { tags, words, numbers, expanded } = searchTerms(text);
+  const { tags, words, numbers, expanded, phrases } = searchTerms(text);
   const jobs: [Param, string | string[]][] = [];
-  const route = async (ps: Param[], kind: "tag" | "words" | "reference", typed: string[]) => {
+  const typedFor = (kind: "tag" | "words" | "reference") =>
+    kind === "tag" ? [...new Set([...tags, ...words, ...phrases.filter((x) => !/\s/.test(x) && !STOP.has(x.toLowerCase()) && !onlyColor(x) && !/^\d+$/.test(x)).map((x) => x.toLowerCase())])]
+    : kind === "reference" ? [...new Set(numbers.flatMap((n) => [n, n.toUpperCase()]))]
+    : [...new Set(phrases.filter((x) => !/^\d{1,3}$/.test(x) && !STOP.has(x.toLowerCase()) && !onlyColor(x)).flatMap(variants))];
+  const route = async (ps: Param[], kind: "tag" | "words" | "reference") => {
     for (const p of ps) {
       if (isExact(p)) {
         const values = await filterValues(p);
-        if (values) { const hit = pickValues(values, kind, expanded, words, numbers, tags); if (hit.length) jobs.push([p, hit]); continue; }
+        const hit = values ? pickValues(values, kind, expanded, words, numbers, tags) : [];
+        if (hit.length) { jobs.push([p, hit]); continue; }
       }
-      for (const v of typed) jobs.push([p, v]); // text filter (or no value list): send what was typed
+      const typed = typedFor(kind);
+      if (!typed.length) continue;
+      if (p.dimension) jobs.push([p, typed]); // a field filter takes many values in one query
+      else for (const v of typed) jobs.push([p, v]);
     }
   };
-  await route(f.tag, "tag", [...tags, ...words]);
-  await route(f.brand, "words", words);
-  await route(f.model, "words", words);
-  await route(f.dial, "words", words);
-  await route(f.reference, "reference", numbers);
+  await route(f.tag, "tag");
+  await route(f.brand, "words");
+  await route(f.model, "words");
+  await route(f.dial, "words");
+  await route(f.reference, "reference");
   for (const n of numbers) for (const p of f.ids) jobs.push([p, n]);
   if (!jobs.length) {
     // nothing to route through a filter (e.g. "blue dial over $40k"): whole question, which its SQL may cap
     const rows = await runWith(null, "");
-    return { rows, searches: 1, notice: rows.length >= 5000 ? `Question ${config.watchCardId()} only returns its newest ${rows.length.toLocaleString()} watches without a filter. Add a brand, model, tag or reference to search all of them, or remove the LIMIT from its SQL.` : undefined };
+    return { rows, searches: 1, searched: ["(no filter: whole question)"], notice: rows.length >= 5000 ? `Question ${config.watchCardId()} only returns its newest ${rows.length.toLocaleString()} watches without a filter. Add a brand, model, tag or reference to search all of them, or remove the LIMIT from its SQL.` : undefined };
   }
   // exact-value filters take every matching value in one query; text filters one value per query
   const runs: [Param, string | string[]][] = jobs.flatMap(([p, v]) => (Array.isArray(v) && !p.dimension ? v.map((x) => [p, x] as [Param, string]) : [[p, v] as [Param, string | string[]]]));
-  const results = await inBatches(runs, 8, ([p, v]) => runWith(p, v));
+  const results = await inBatches(runs, 10, ([p, v]) => runWith(p, v));
   const byId = new Map<string, WatchRow>();
   for (const rs of results) for (const r of rs) byId.set(r.item_id, r);
-  return { rows: [...byId.values()], searches: runs.length };
+  // what was sent to which filter, and what came back (shown on screen)
+  const hits = new Map<string, { vals: Set<string>; n: number }>();
+  runs.forEach(([p, v], i) => {
+    const e = hits.get(p.name) ?? { vals: new Set<string>(), n: 0 };
+    if (results[i].length) { ([] as string[]).concat(v).forEach((x) => e.vals.add(x)); e.n += results[i].length; }
+    hits.set(p.name, e);
+  });
+  const searched = [...hits.entries()].map(([name, e]) => `${name}: ${e.n ? `${[...e.vals].slice(0, 6).map((x) => `“${x}”`).join(", ")} → ${e.n}` : "no match"}`);
+  return { rows: [...byId.values()], searches: runs.length, searched };
 }
 
 // ---------- read the typed request ----------
@@ -395,6 +429,7 @@ export async function searchWatches(text: string) {
     missing: [...(rows.length ? [] : p.missing), ...(p.filters.tag ?? []).filter((t) => !rows.some((r) => (r.tag ?? "").toLowerCase() === t))],
     inventory: all.length,
     searches: pulled.searches,
+    searched: pulled.searched,
     notice: [pulled.notice, rows.length && !hasItemIds(rows) ? `Question ${config.watchCardId()} has no item id in its results, so these watches can be searched but not tagged yet. Add the watch's item id (items.id) as a column in ${config.watchCardId()}.` : ""].filter(Boolean).join(" ") || undefined,
   };
 }

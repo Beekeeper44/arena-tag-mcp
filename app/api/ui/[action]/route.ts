@@ -96,7 +96,7 @@ export async function POST(req: Request, ctx: Ctx) {
       case "find": {
         if (body.kind === "watches") {
           const w = await searchWatches(String(body.text ?? ""));
-          return json({ parsed: w.parsed, has_filter: w.has_filter, queries: [], ms: w.ms, total: w.rows.length, missing: w.missing, inventory: w.inventory, cards: w.rows.map(watchToTile), notice: w.notice });
+          return json({ parsed: w.parsed, has_filter: w.has_filter, queries: [], ms: w.ms, total: w.rows.length, missing: w.missing, inventory: w.inventory, cards: w.rows.map(watchToTile), notice: w.notice, searched: w.searched });
         }
         // Every prompt queries question 4131 fresh, using its own filters (only matching cards come back).
         const r = await smartSearch(String(body.text ?? ""));

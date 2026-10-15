@@ -518,7 +518,7 @@ async function find(text){
   if(seq!==findSeq) return;
   const at=new Date().toLocaleTimeString([], {hour:"numeric",minute:"2-digit",second:"2-digit"});
   $("#srcCount").textContent=`· ${res.total.toLocaleString()} matching · pulled ${at} (${(res.ms/1000).toFixed(1)}s)`;
-  $("#srcMsg").innerHTML=res.notice?`<span class="warn-txt">${esc(res.notice)}</span>`:"";
+  $("#srcMsg").innerHTML=(res.notice?`<span class="warn-txt">${esc(res.notice)}</span>`:"")+(res.searched&&res.searched.length?`<div class="dim small" style="margin-top:4px">45046 filters searched: ${res.searched.map(esc).join(" · ")}</div>`:"");
   if(!res.has_filter){ showEmpty(KIND==="watches"?"Add at least one filter: a brand, model, reference, dial color, year, value range or current tag.":"Add at least one filter: a player, set, parallel, grade, value range, AC number or cert number."); return; }
   const p=res.parsed;
   S={rm:[].concat(p.filters&&p.filters.tag||[]).map(t=>String(t).toLowerCase()), rmq:"", kind:KIND, text, queries:res.queries, action:p.action, mode:p.mode, filters:p.filters, post:p.post_filters, tag:p.tag||"", matched:res.cards, total:res.total, missing:res.missing||[], phase:"review", prev:new Map(), limit:240};
