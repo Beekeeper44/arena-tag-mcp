@@ -262,6 +262,24 @@ export async function approveReview(session: AdminSession, itemId: string, admin
   }
 }
 
+// The review page's card object is fuller than GET /cards/{id} (gradingReport, label names, set/player names...).
+// Fill anything the slim card is missing from the card's last review grade, the way the page has it.
+async function fullCard(session: AdminSession, itemId: string, card: Record<string, any>) {
+  try {
+    const r = await fetch(`${config.adminApiUrl()}/grading_tasks?limit=100&offset=0&search=&where=card_id=${itemId}`, { headers: headers(session.accessToken) });
+    if (!r.ok) return card;
+    const tasks = await r.json();
+    const list: any[] = Array.isArray(tasks?.data) ? tasks.data : Array.isArray(tasks) ? tasks : [];
+    const grades = list.filter((t) => t?.kind === "review" || t?.skill === "review").flatMap((t) => t.grades ?? []);
+    const last = grades.sort((a: any, b: any) => String(b.finishedAt ?? b.createdAt).localeCompare(String(a.finishedAt ?? a.createdAt)))[0];
+    if (!last) return card;
+    const skip = new Set(["id", "createdAt", "updatedAt", "status", "kind", "name", "graderId", "userId", "gradingTaskId", "cardId", "startedAt", "finishedAt", "duration",
+      "isVerified", "verificationDuration", "notes", "tags", "overall", "centering", "corners", "edges", "surface"]);
+    for (const [k, v] of Object.entries(last)) if (!skip.has(k) && (card[k] === undefined || card[k] === null) && v !== undefined && v !== null) card[k] = v;
+  } catch { /* use the card as is */ }
+  return card;
+}
+
 // ---------- Change grades the way the admin review page does ----------
 // The review page never PATCHes grades onto /cards/{id}. It keeps the new grades on the card, rebuilds
 // the label then the slab from that card, and the grade becomes real when it's approved (POST /grades/review).
@@ -275,7 +293,7 @@ export async function changeGradesLikeReview(session: AdminSession, itemId: stri
     const res = await call(`/cards/${itemId}`, "GET");
     if (!res.ok) return { ok: false, status: res.status, error: `load card: ${(await res.text()).slice(0, 200)}`, step };
     const raw = await res.json();
-    const card: Record<string, any> = raw && typeof raw === "object" && raw.card ? raw.card : raw;
+    const card: Record<string, any> = await fullCard(session, itemId, raw && typeof raw === "object" && raw.card ? raw.card : raw);
     const g: Record<string, number> = {};
     for (const [k, v] of Object.entries(grades)) { g[k] = Number(v); card[config.gradeField(k as any)] = Number(v); }
 
@@ -289,11 +307,13 @@ export async function changeGradesLikeReview(session: AdminSession, itemId: stri
       if (links.frontLabelPictureUrl) links.frontV2LabelPictureUrl = card.frontV2LabelPictureUrl = links.frontLabelPictureUrl;
       if (links.backLabelPictureUrl) links.backV2LabelPictureUrl = card.backV2LabelPictureUrl = links.backLabelPictureUrl;
       if (labels.labelVersion != null) links.labelVersion = card.labelVersion = labels.labelVersion;
+      if (!links.frontLabelPictureUrl) return { ok: false, status: lr.status, error: `label not rebuilt — admin returned no label (${JSON.stringify(labels).slice(0, 160)}). Nothing was approved.`, step };
       const sr = await call(`/cards/generate_slab_images`, "PATCH", card);
       step.slab = sr.status;
       if (!sr.ok) return { ok: false, status: sr.status, error: `generate_slab_images: ${(await sr.text()).slice(0, 200)}`, step };
       const slabs = (await sr.json().catch(() => ({}))) as Record<string, unknown>;
       for (const k of ["frontSlabPictureUrl", "backSlabPictureUrl"]) if (slabs[k]) links[k] = card[k] = asAsset(slabs[k]);
+      if (!links.frontSlabPictureUrl) return { ok: false, status: sr.status, error: `slab not rebuilt — admin returned no slab (${JSON.stringify(slabs).slice(0, 160)}). Nothing was approved.`, step };
       if (links.frontSlabPictureUrl) links.frontV2SlabPictureUrl = links.frontSlabPictureUrl;
       if (links.backSlabPictureUrl) links.backV2SlabPictureUrl = links.backSlabPictureUrl;
     }
