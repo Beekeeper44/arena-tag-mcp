@@ -624,7 +624,7 @@ async function find(text){
   requestAnimationFrame(()=>{const i=$("#input");i.style.height="auto";i.style.height=Math.min(i.scrollHeight+2,200)+"px"});
   if(!text.trim()) return;
   const seq=++findSeq;
-  $("#empty").hidden=false; $("#empty").innerHTML=`<span class="spin"></span>Searching ${KIND==="watches"?"watches":"Metabase 4131"}…`; $("#summary").innerHTML=""; $("#grid").innerHTML=""; $("#bar").hidden=true;
+  $("#empty").hidden=false; $("#empty").innerHTML=`<span class="spin"></span>Searching ${KIND==="arena"?"orders in Metabase 45739":KIND==="watches"?"watches in Metabase 45046":"Metabase 4131"}…`; $("#summary").innerHTML=""; $("#grid").innerHTML=""; $("#bar").hidden=true;
   let res;
   try{ res=await api("find",{text,kind:KIND}); }
   catch(e){ if(seq===findSeq) showEmpty(e.message); return; }
@@ -634,7 +634,7 @@ async function find(text){
   $("#srcMsg").innerHTML=(res.notice?`<span class="warn-txt">${esc(res.notice)}</span>`:"")+(res.searched&&res.searched.length?`<div class="dim small" style="margin-top:4px">45046 filters searched: ${res.searched.map(esc).join(" · ")}</div>`:"");
   if(!res.has_filter){ showEmpty(KIND==="arena"?"Type or paste one or more order numbers, e.g. 20225522, 20225523.":KIND==="watches"?"Add at least one filter: a brand, model, reference, dial color, year, value range or current tag.":"Add at least one filter: a player, set, parallel, grade, value range, AC number or cert number."); return; }
   const p=res.parsed;
-  S={sort:"high", only75:false, ge:{}, geOpen:{}, geSaved:{}, orders:res.orders||null, order:null, rm:[].concat(p.filters&&p.filters.tag||[]).map(t=>String(t).toLowerCase()), rmq:"", kind:KIND, text, queries:res.queries, action:p.action, mode:p.mode, filters:p.filters, post:p.post_filters, tag:p.tag||"", matched:res.cards, total:res.total, missing:res.missing||[], phase:"review", prev:new Map(), limit:240};
+  S={sort:KIND==="arena"?"high":"none", only75:false, ge:{}, geOpen:{}, geSaved:{}, orders:res.orders||null, order:null, rm:[].concat(p.filters&&p.filters.tag||[]).map(t=>String(t).toLowerCase()), rmq:"", kind:KIND, text, queries:res.queries, action:p.action, mode:p.mode, filters:p.filters, post:p.post_filters, tag:p.tag||"", matched:res.cards, total:res.total, missing:res.missing||[], phase:"review", prev:new Map(), limit:240};
   $("#confirmBtn").hidden=false; $("#dryWrap").hidden=false;
   recompute(true);
   if(S.kind==="arena"&&res.card_id){ const b=document.querySelector("#source b"); if(b) b.textContent=`Live · Metabase ${res.card_id}${res.check_card_id?` + Overall Check ${res.check_card_id}`:""}, fresh every search`;
@@ -745,7 +745,10 @@ $("#appr").onchange=()=>{ try{ localStorage.setItem("tb_approve",$("#appr").chec
 // Arena Club: sort by grade (high → low default) and optionally show only 7.5 or lower
 const isLow=r=>!!(r&&(r.authentic||(r.grade_num!=null&&Number(r.grade_num)<=7.5)));
 function arenaView(rows){
-  if(!S||S.kind!=="arena") return rows;
+  if(!S) return rows;
+  const ev=r=>Number(r.ev)||0;
+  if(S.sort==="evhigh"||S.sort==="evlow"){ const out=(S.kind==="arena"&&S.only75?rows.filter(isLow):rows.slice()); out.sort((a,b)=>S.sort==="evhigh"?ev(b)-ev(a):ev(a)-ev(b)); return out; }
+  if(S.kind!=="arena") return rows;
   const g=r=>r.authentic?0:r.grade_num==null?-1:Number(r.grade_num);
   let out=S.only75?rows.filter(isLow):rows.slice();
   if(S.sort==="low") out.sort((a,b)=>(a.grade_num==null)-(b.grade_num==null)||g(a)-g(b));
@@ -755,6 +758,19 @@ function arenaView(rows){
 }
 // Arena Club tile: a div with role="button" (a real <button> can't contain the grade inputs)
 $("#grid").addEventListener("keydown",e=>{ const t=e.target; if(!(t.classList&&t.classList.contains("tile")&&t.getAttribute("role")==="button")) return; if(e.key==="Enter"||e.key===" "){ e.preventDefault(); t.click(); } });
+// Grade boxes: clicking one highlights its number (type to replace); Space = next card's Centering, Shift+Space = previous card
+let GIN_JUST=null;
+document.addEventListener("focusin",e=>{ const i=e.target; if(!(i.matches&&i.matches("input.gin"))) return; GIN_JUST=i; i.select(); setTimeout(()=>{ if(document.activeElement===i) i.select(); },0); });
+document.addEventListener("mouseup",e=>{ if(GIN_JUST&&e.target===GIN_JUST){ e.preventDefault(); GIN_JUST.select(); } GIN_JUST=null; });
+document.addEventListener("keydown",e=>{
+  const i=e.target; if(!(i.matches&&i.matches("input.gin"))||e.key!==" ") return;
+  e.preventDefault(); e.stopPropagation();
+  const firsts=[...document.querySelectorAll('#grid input.gin[data-gk="centering"]')];
+  const k=firsts.findIndex(x=>x.dataset.gid===i.dataset.gid);
+  const next=firsts[k+(e.shiftKey?-1:1)];
+  if(next){ next.focus({preventScroll:true}); next.closest(".tw")?.scrollIntoView({block:"nearest",behavior:"smooth"}); next.select(); }
+  else{ i.blur(); const b=$("#ovBtn"); if(b&&!b.hidden) b.focus(); } // last card: go to Save
+},true);
 function arenaTile(r,html){
   if(r.kind!=="arena") return html;
   html=html.replace('<button type="button" class="tile','<div role="button" tabindex="0" class="tile');
@@ -855,12 +871,15 @@ function renderInner(){
       <div class="n">${sel.length}<span class="dim small" style="font-size:13px;font-weight:500"> of ${S.rows.length} selected</span></div>
       <div class="dim small">${money(ev)} estimated value</div>
       ${S.total>S.matched.length?`<div class="small" style="color:var(--warn)">Showing the first ${S.matched.length.toLocaleString()} of ${S.total.toLocaleString()} matches. Narrow the request.</div>`:""}
-      ${S.kind==="arena"?`<div class="sortbar"><label class="dim small" for="gsort">Sort</label><select id="gsort" aria-label="Sort cards">
-          <option value="high"${S.sort==="high"?" selected":""}>Grade: high → low</option>
+      <div class="sortbar"><label class="dim small" for="gsort">Sort</label><select id="gsort" aria-label="Sort">
+          ${S.kind==="arena"?`<option value="high"${S.sort==="high"?" selected":""}>Grade: high → low</option>
           <option value="low"${S.sort==="low"?" selected":""}>Grade: low → high</option>
-          <option value="low75"${S.sort==="low75"?" selected":""}>7.5 or lower / authentic first</option></select>
+          <option value="low75"${S.sort==="low75"?" selected":""}>7.5 or lower / authentic first</option>`:`<option value="none"${S.sort==="none"?" selected":""}>As found</option>`}
+          <option value="evhigh"${S.sort==="evhigh"?" selected":""}>EV: high → low</option>
+          <option value="evlow"${S.sort==="evlow"?" selected":""}>EV: low → high</option></select>
+        ${S.kind==="arena"?`
         <button type="button" class="btn only75${S.only75?" on":""}" id="only75" aria-pressed="${!!S.only75}">${S.only75?"✓ ":""}Only ≤ 7.5 / auth</button>
-        <button type="button" class="btn" id="liveBtn" title="Re-read every card's grades, slab and tag straight from admin (Metabase updates on a delay)">↻ Refresh from admin</button></div>`:""}
+        <button type="button" class="btn" id="liveBtn" title="Re-read every card's grades, slab and tag straight from admin (Metabase updates on a delay)">↻ Refresh from admin</button>`:""}</div>
       ${locked?"":`<div class="selbar"><button class="btn link" type="button" id="all">Select all</button><button class="btn link" type="button" id="none">Clear</button></div>`}
     </div>
     ${S.missing&&S.missing.length&&!locked?`<div class="warn"><b>Nothing found for ${esc(S.missing.join(", "))}.</b> ${S.missing.length<[].concat(S.filters.player_name).length?"Showing only the names that matched.":"Nothing else was selected."}</div>`:""}
