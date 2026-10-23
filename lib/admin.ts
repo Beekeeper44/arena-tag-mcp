@@ -95,6 +95,7 @@ export async function patchTag(session: AdminSession, itemId: string, tag: strin
       }
       // Retry only on rate limits / server errors
       if (res.status === 429 || res.status >= 500) {
+        if (attempt === 3) return { ok: false, status: res.status, error: (await res.text()).slice(0, 300) || "server error" };
         await new Promise((r) => setTimeout(r, 400 * attempt));
         continue;
       }
@@ -210,7 +211,7 @@ const CARD_KEYS = ["cardTypeId", "brand", "year", "gradingCompany", "gradingRepo
   "isFullArt", "holo", "insert", "edition", "rarity", "signature", "playerName", "setName", "setNumber", "parallelName", "parallelNumber", "parallelTotal",
   "labelPlayerName", "labelSetName", "labelParallel", "searchBrand", "side", "subset", "design", "promo", "isShortPrint"];
 const PIC = /Picture(Url|Id)$/;
-export async function approveReview(session: AdminSession, itemId: string, adminUserId: string, reviewerName: string, links: Record<string, unknown> = {}) {
+export async function approveReview(session: AdminSession, itemId: string, adminUserId: string, reviewerName: string, links: Record<string, unknown> = {}, grades: Record<string, number> = {}, cardIn?: Record<string, any>) {
   const get = async (path: string) => {
     const r = await fetch(`${config.adminApiUrl()}${path}`, { headers: headers(session.accessToken) });
     if (!r.ok) throw new Error(`${path.split("?")[0]} ${r.status}: ${(await r.text()).slice(0, 160)}`);
@@ -224,8 +225,9 @@ export async function approveReview(session: AdminSession, itemId: string, admin
     const review = list.filter((t) => t?.kind === "review" || t?.skill === "review").sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))[0];
     if (!review?.id) throw new Error("this card has no review task");
     const last = [...(review.grades ?? [])].sort((a: any, b: any) => String(b.finishedAt ?? b.createdAt).localeCompare(String(a.finishedAt ?? a.createdAt)))[0] ?? {};
-    const cardRaw = await get(`/cards/${itemId}`);
-    const card: Record<string, any> = cardRaw && typeof cardRaw === "object" && cardRaw.card ? cardRaw.card : cardRaw;
+    let card: Record<string, any> | undefined = cardIn;
+    if (!card) { const cardRaw = await get(`/cards/${itemId}`); card = cardRaw && typeof cardRaw === "object" && cardRaw.card ? cardRaw.card : cardRaw; }
+    card = card as Record<string, any>;
 
     const body: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(last)) if (!DROP.has(k)) body[k] = v;           // card details from the last review grade
@@ -236,6 +238,7 @@ export async function approveReview(session: AdminSession, itemId: string, admin
     if (card.gradingParallelId !== undefined) body.parallelId = card.gradingParallelId;
     for (const g of ["overall", "centering", "corners", "edges", "surface"]) if (card[g] !== undefined) body[g] = card[g];
     Object.assign(body, links);                                                          // the label / slab just rebuilt
+    Object.assign(body, grades);                                                         // the new grades
     const now = new Date();
     Object.assign(body, {
       status: "approved", kind: "review", name: reviewerName, graderId: grader.id, userId: adminUserId,
@@ -248,5 +251,48 @@ export async function approveReview(session: AdminSession, itemId: string, admin
     return { ok: true, status: r.status, grade_id: res?.id as string | undefined };
   } catch (e) {
     return { ok: false, status: 0, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+// ---------- Change grades the way the admin review page does ----------
+// The review page never PATCHes grades onto /cards/{id}. It keeps the new grades on the card, rebuilds
+// the label then the slab from that card, and the grade becomes real when it's approved (POST /grades/review).
+//   1. GET /cards/{id}  2. put the new grades on it  3. generate_label_images  4. generate_slab_images  5. approve
+export async function changeGradesLikeReview(session: AdminSession, itemId: string, adminUserId: string, reviewerName: string, grades: Record<string, number>) {
+  const call = async (path: string, method: string, body?: unknown) =>
+    fetch(`${config.adminApiUrl()}${path}`, { method, headers: headers(session.accessToken), body: body === undefined ? undefined : JSON.stringify(body) });
+  const step = { label: 0, slab: 0, approve: 0 };
+  try {
+    const res = await call(`/cards/${itemId}`, "GET");
+    if (!res.ok) return { ok: false, status: res.status, error: `load card: ${(await res.text()).slice(0, 200)}`, step };
+    const raw = await res.json();
+    const card: Record<string, any> = raw && typeof raw === "object" && raw.card ? raw.card : raw;
+    const g: Record<string, number> = {};
+    for (const [k, v] of Object.entries(grades)) { g[k] = Number(v); card[config.gradeField(k as any)] = Number(v); }
+
+    const links: Record<string, unknown> = {};
+    if (config.regenerateImages()) {
+      const lr = await call(`/cards/generate_label_images`, "PATCH", card);
+      step.label = lr.status;
+      if (!lr.ok) return { ok: false, status: lr.status, error: `generate_label_images: ${(await lr.text()).slice(0, 200)}`, step };
+      const labels = (await lr.json().catch(() => ({}))) as Record<string, unknown>;
+      for (const k of LABEL_KEYS) if (labels[k]) links[k] = card[k] = asAsset(labels[k]);
+      if (links.frontLabelPictureUrl) links.frontV2LabelPictureUrl = card.frontV2LabelPictureUrl = links.frontLabelPictureUrl;
+      if (links.backLabelPictureUrl) links.backV2LabelPictureUrl = card.backV2LabelPictureUrl = links.backLabelPictureUrl;
+      if (labels.labelVersion != null) links.labelVersion = card.labelVersion = labels.labelVersion;
+      const sr = await call(`/cards/generate_slab_images`, "PATCH", card);
+      step.slab = sr.status;
+      if (!sr.ok) return { ok: false, status: sr.status, error: `generate_slab_images: ${(await sr.text()).slice(0, 200)}`, step };
+      const slabs = (await sr.json().catch(() => ({}))) as Record<string, unknown>;
+      for (const k of ["frontSlabPictureUrl", "backSlabPictureUrl"]) if (slabs[k]) links[k] = card[k] = asAsset(slabs[k]);
+      if (links.frontSlabPictureUrl) links.frontV2SlabPictureUrl = links.frontSlabPictureUrl;
+      if (links.backSlabPictureUrl) links.backV2SlabPictureUrl = links.backSlabPictureUrl;
+    }
+    const a = await approveReview(session, itemId, adminUserId, reviewerName, links, g, card);
+    step.approve = a.status;
+    if (!a.ok) return { ok: false, status: a.status, error: `approve: ${a.error}`, step };
+    return { ok: true, status: a.status, grade_id: a.grade_id, rebuilt: !!links.frontLabelPictureUrl, step };
+  } catch (e) {
+    return { ok: false, status: 0, error: e instanceof Error ? e.message : String(e), step };
   }
 }

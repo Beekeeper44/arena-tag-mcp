@@ -3,7 +3,7 @@
 import { randomBytes } from "crypto";
 import { config, validateTag } from "./config";
 import { queryCards, queryCardsDetailed, summarize, type CardFilters, type CardRow, type PostFilters } from "./metabase";
-import { openAdminSession, patchTag, regenerateImages, approveReview, type WriteResult, type WriteKind } from "./admin";
+import { openAdminSession, patchTag, regenerateImages, approveReview, changeGradesLikeReview, type WriteResult, type WriteKind } from "./admin";
 import { searchWatches, watchLabel, type WatchRow } from "./watches";
 import { searchArena, type ArenaCard } from "./arena";
 import { q } from "./db";
@@ -274,13 +274,12 @@ export async function undoRun(input: { run_id: string; confirm: boolean; request
      SELECT $1, t.item_id, $2, t.prev FROM unnest($3::text[], $4::text[]) AS t(item_id, prev)`,
     [undoId, run.tag, items.map((i) => i.item_id), items.map((i) => i.previous_tag)]
   );
-  // grade runs: only restore what was known before (an empty "{}" means nothing to put back)
+  // grade runs: approve the previous grades again (only values that were known; "{}" = nothing to put back)
   const restore = run.kind === "grades" ? items.filter((i) => i.previous_tag && i.previous_tag !== "{}") : items;
-  const res = await executeWrites(undoId, restore.map((i) => ({ item_id: i.item_id, target: i.previous_tag })), "restored", input.as_admin_user_id, run.kind);
-  if (run.kind === "grades") {
-    const approved = !!(run.filters as any)?.approve;
-    Object.assign(res, await rebuildImages(res.written_ids, input.as_admin_user_id, approved ? { name: input.requested_by } : undefined));
-  }
+  const res = run.kind === "grades"
+    ? await writeGrades(undoId, restore.map((i) => ({ item_id: i.item_id, grades: JSON.parse(i.previous_tag as string) })), "restored", input.as_admin_user_id, input.requested_by)
+    : await executeWrites(undoId, restore.map((i) => ({ item_id: i.item_id, target: i.previous_tag })), "restored", input.as_admin_user_id, run.kind);
+
   const status = res.failed || res.mismatch ? "partial" : "completed";
   await q(`UPDATE tag_runs SET status=$2, finished_at=now(), result=$3 WHERE id=$1`, [undoId, status, JSON.stringify(res)]);
   await q(`UPDATE tag_runs SET status='undone' WHERE id=$1 AND $2 = 'completed'`, [run.id, status]);
@@ -529,6 +528,31 @@ async function rebuildImages(ids: string[], adminUserId?: string, approve?: { na
   }
 }
 
+// Apply grades to cards the review page's way (label → slab → approve), one admin session, results per item.
+async function writeGrades(runId: string, items: { item_id: string; grades: Record<string, number> }[], okStatus: string, adminUserId: string | undefined, reviewer: string) {
+  const who = adminUserId || config.sessionUserId();
+  const session = await openAdminSession(adminUserId);
+  let results: Awaited<ReturnType<typeof changeGradesLikeReview>>[];
+  try {
+    results = await pool(items, Math.min(3, config.writeConcurrency()), (it) => changeGradesLikeReview(session, it.item_id, who, reviewer, it.grades));
+  } finally {
+    await session.revoke();
+  }
+  const statuses = results.map((r) => (r.ok ? okStatus : "failed"));
+  await q(
+    `UPDATE tag_run_items AS i SET status=t.status, http_status=t.http, error=t.err, updated_at=now()
+     FROM unnest($2::text[], $3::text[], $4::int[], $5::text[]) AS t(item_id, status, http, err)
+     WHERE i.run_id=$1 AND i.item_id=t.item_id`,
+    [runId, items.map((x) => x.item_id), statuses, results.map((r) => r.status), results.map((r) => r.error ?? null)]
+  );
+  const ok = items.filter((_, i) => results[i].ok).map((x) => x.item_id);
+  return {
+    written_ids: ok, succeeded: ok.length, failed: items.length - ok.length, mismatch: 0,
+    approved: ok.length, rebuilt: results.filter((r) => r.ok && r.rebuilt).length, rebuild_failed: [] as { item_id: string; error: string }[], approve_failed: [] as { item_id: string; error: string }[],
+    failures: results.map((r, i) => ({ item_id: items[i].item_id, status: r.status, error: r.error })).filter((_, i) => !results[i].ok).slice(0, 20),
+  };
+}
+
 // ---------- Arena Club: change any subgrade and/or the overall on cards (logged, undoable) ----------
 const GRADES = ["overall", "centering", "corners", "edges", "surface"] as const;
 type Grade = (typeof GRADES)[number];
@@ -578,9 +602,8 @@ export async function runGradeUpdate(input: { text: string; items: { item_id: st
     await q(`UPDATE tag_runs SET status='dry_run_completed', finished_at=now(), result=$2 WHERE id=$1`, [id, JSON.stringify({ would_write: changes.length })]);
     return { run_id: id, status: "dry_run_completed", dry_run: true, would_write: changes.length, written_ids: [] as string[], succeeded: 0, failed: 0, mismatch: 0, failures: [] };
   }
-  const res = await executeWrites(id, changes.map((x) => ({ item_id: x.c.item_id, target: JSON.stringify(x.next) })), "written", input.as_admin_user_id, "grades");
-  const images = await rebuildImages(res.written_ids, input.as_admin_user_id, input.approve ? { name: input.user } : undefined);
-  const status = res.failed || res.mismatch ? "partial" : "completed";
-  await q(`UPDATE tag_runs SET status=$2, finished_at=now(), result=$3 WHERE id=$1`, [id, status, JSON.stringify({ ...res, ...images })]);
-  return { run_id: id, status, dry_run: false, ...res, ...images };
+  const res = await writeGrades(id, changes.map((x) => ({ item_id: x.c.item_id, grades: x.next })), "written", input.as_admin_user_id, input.user);
+  const status = res.failed ? (res.succeeded ? "partial" : "failed") : "completed";
+  await q(`UPDATE tag_runs SET status=$2, finished_at=now(), result=$3 WHERE id=$1`, [id, status, JSON.stringify(res)]);
+  return { run_id: id, status, dry_run: false, ...res };
 }

@@ -666,7 +666,7 @@ function gradeEditor(r){
   </div>`;
 }
 function geCount(){ return S&&S.ge?Object.values(S.ge).filter(o=>Object.keys(o).length).length:0; }
-function ovButton(){ const b=$("#ovBtn"); if(!b) return; const n=geCount(); b.hidden=!(S&&S.kind==="arena"&&n); const aw=$("#apprWrap"); if(aw) aw.hidden=b.hidden; b.textContent=`${$("#appr")&&$("#appr").checked?"Save & approve":"Save grades to admin"} (${n} card${n===1?"":"s"})`; }
+function ovButton(){ const b=$("#ovBtn"); if(!b) return; const n=geCount(); b.hidden=!(S&&S.kind==="arena"&&n); const aw=$("#apprWrap"); if(aw) aw.hidden=true; b.textContent=`Save & approve (${n} card${n===1?"":"s"})`; }
 function geSet(id,k,raw){
   const r=S.matched.find(x=>x.item_id===id); if(!r) return;
   const v=String(raw).trim(), cur=gNow(r,k); S.ge[id]=S.ge[id]||{};
@@ -690,16 +690,16 @@ async function saveOverall(){
   const items=Object.entries(S.ge).filter(([,o])=>Object.keys(o).length).map(([item_id,o])=>({item_id,grades:Object.fromEntries(Object.entries(o).map(([k,v])=>[k,Number(v)]))}));
   for(const it of items) for(const [k,v] of Object.entries(it.grades)) if(!gOK(v)){ $("#barmsg").innerHTML=`<span class="warn-txt">“${esc(String(S.ge[it.item_id][k]))}” isn't a grade (${k}). Use 0 to 10 in half steps, e.g. 8.5.</span>`; return; }
   const dry=$("#dry").checked;
-  const approve=$("#appr").checked, n=items.length, cs=n===1?"card":"cards";
+  const approve=true, n=items.length, cs=n===1?"card":"cards"; // like the review page: a grade change is made by approving it
   const lab={centering:"Centering",corners:"Corners",edges:"Edges",surface:"Surface",overall:"Overall"};
   const lines=items.map(it=>{ const c=S.matched.find(x=>x.item_id===it.item_id)||{};
     const ch=Object.entries(it.grades).map(([k,v])=>`${lab[k]} ${gNow(c,k)??"–"} → <b>${v}</b>`).join(" · ");
     return `<li><span><b>${esc(c.player_name||"")}</b> <span class="dim">AC ${esc(c.ac||"")}</span><br>${ch}</span></li>`; });
   const canTag=S.action==="set"&&S.tag&&/^[a-z0-9_]+$/.test(S.tag);
   const ok=await ask({
-    title:approve?`Do you wish to approve these ${n} ${cs} to admin?`:`Save grades on these ${n} ${cs} to admin?`,
+    title:n===1?"Do you wish to approve this card to admin?":`Do you wish to approve these ${n} cards to admin?`,
     body:`${dry?"<b>Dry run:</b> records what would change without writing to admin.<br><br>":""}<ul class="taglist gl">${lines.slice(0,12).join("")}${n>12?`<li><span class="dim">+${n-12} more</span></li>`:""}</ul>
-      ${approve?"Approving makes the new grades live, like clicking <b>Approve</b> on the review page. The label and slab are rebuilt first.":"The new grades will wait for <b>Approve</b> on the review page. The label and slab are rebuilt."}
+      Same as the review page: the label and slab are rebuilt with the new grades, then the cards are <b>approved</b>, which makes the new grades live.
       ${canTag?`<label class="asktag"><input type="checkbox" id="askTag" checked> Also tag these ${n} ${cs} as <b>${esc(S.tag)}</b></label>`:`<div class="dim small" style="margin-top:8px">To tag them too, enter a tag in the tag box first.</div>`}
       <div class="dim small" style="margin-top:6px">You can undo this from Recent runs.</div>`,
     yes:dry?"Run dry run":approve?"Yes, save & approve":"Yes, save to admin"});
@@ -716,7 +716,7 @@ async function saveOverall(){
         S.geSaved[id]=true; delete S.ge[id]; });
       recompute(false); // re-sort by the new grades
       const nf=(r.rebuild_failed||[]).length;
-      $("#barmsg").innerHTML=`${r.succeeded?"✓ ":""}Grades saved on <b>${r.succeeded}</b> card${r.succeeded===1?"":"s"}${r.failed||r.mismatch?` · <span class="obad">${(r.failed||0)+(r.mismatch||0)} failed — admin said ${esc(String((r.failures||[])[0]?.status??"?"))}: ${esc(String((r.failures||[])[0]?.error||"no message").slice(0,220))}</span>`:""}${r.rebuilt?` · slab &amp; label images rebuilt on ${r.rebuilt}`:""}${nf?` · <span class="obad">${nf} image${nf===1?"":"s"} not rebuilt — open in admin and save once</span>`:""}${r.approved?` · <b>approved ${r.approved}</b> (live)`:""}${(r.approve_failed||[]).length?` · <span class="obad">${r.approve_failed.length} not approved: ${esc(r.approve_failed[0].error)}</span>`:""}${!approve?` · <span class="dim">not approved — approve on the review page</span>`:""}. Run <b>${esc(r.run_id)}</b> — undo from Recent runs.`;
+      $("#barmsg").innerHTML=`${r.succeeded?"✓ ":""}Grades saved on <b>${r.succeeded}</b> card${r.succeeded===1?"":"s"}${r.failed||r.mismatch?` · <span class="obad">${(r.failed||0)+(r.mismatch||0)} failed — admin said ${esc(String((r.failures||[])[0]?.status??"?"))}: ${esc(String((r.failures||[])[0]?.error||"no message").slice(0,220))}</span>`:""}${r.rebuilt?` · label &amp; slab rebuilt on ${r.rebuilt}`:""}${nf?` · <span class="obad">${nf} image${nf===1?"":"s"} not rebuilt — open in admin and save once</span>`:""}${r.approved?` · <b>approved ${r.approved}</b> (live)`:""}${(r.approve_failed||[]).length?` · <span class="obad">${r.approve_failed.length} not approved: ${esc(r.approve_failed[0].error)}</span>`:""}. Run <b>${esc(r.run_id)}</b> — undo from Recent runs.`;
     }
     if(alsoTag){
       try{
