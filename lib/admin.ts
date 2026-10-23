@@ -203,15 +203,19 @@ export async function regenerateImages(session: AdminSession, itemId: string) {
 }
 
 // ---------- Approve: same as clicking "Approve" on the admin review page ----------
-// POST /grades/review with a new grade record: status "approved", kind "review", the grades, gradingReport,
-// all picture links, the card's details, and who reviewed it (graderId from /users/{id}/grader,
-// gradingTaskId = the card's "review" grading task).
-const DROP = new Set(["id", "createdAt", "updatedAt", "verificationDuration", "isVerified", "verifierId", "notes", "verificationStatus"]);
-const CARD_KEYS = ["cardTypeId", "brand", "year", "gradingCompany", "gradingReport", "labelVersion", "team", "sport", "language", "slabKind", "isRookie", "isRelic",
-  "isFullArt", "holo", "insert", "edition", "rarity", "signature", "playerName", "setName", "setNumber", "parallelName", "parallelNumber", "parallelTotal",
-  "labelPlayerName", "labelSetName", "labelParallel", "searchBrand", "side", "subset", "design", "promo", "isShortPrint"];
-const PIC = /Picture(Url|Id)$/;
-export async function approveReview(session: AdminSession, itemId: string, adminUserId: string, reviewerName: string, links: Record<string, unknown> = {}, grades: Record<string, number> = {}, cardIn?: Record<string, any>) {
+// POST /grades/review with exactly the fields the review page sends (captured from a real Approve), filled the same
+// way: from the card as it stands (with the new grades and the new label/slab), plus who reviewed it and when.
+const REVIEW_KEYS = [
+  "backAutoLabelPictureUrl", "backLabelPictureUrl", "backPictureId", "backPictureUrl", "backPrintLabelPictureUrl", "backSlabPictureUrl",
+  "backTrimmedPictureUrl", "backV2LabelPictureUrl", "backV2SlabPictureUrl", "brand", "cardId", "cardTypeId", "centering", "corners", "duration",
+  "edges", "edition", "finishedAt", "frontAutoLabelPictureUrl", "frontLabelPictureUrl", "frontPictureId", "frontPictureUrl",
+  "frontPrintLabelPictureUrl", "frontSlabPictureUrl", "frontTrimmedPictureUrl", "frontV2LabelPictureUrl", "frontV2SlabPictureUrl", "graderId",
+  "gradingCompany", "gradingReport", "gradingTaskId", "holo", "insert", "isFullArt", "isRelic", "isRookie", "kind", "labelParallel",
+  "labelPlayerName", "labelSetName", "labelVersion", "language", "name", "overall", "parallelId", "parallelName", "parallelNumber",
+  "parallelTotal", "playerName", "rarity", "searchBrand", "setId", "setName", "setNumber", "side", "signature", "slabKind", "sport",
+  "startedAt", "status", "subsetId", "surface", "team", "userId", "year",
+] as const;
+export async function approveReview(session: AdminSession, itemId: string, adminUserId: string, reviewerName: string, links: Record<string, unknown> = {}, grades: Record<string, number> = {}, cardIn?: Record<string, any>, startedAt?: Date) {
   const get = async (path: string) => {
     const r = await fetch(`${config.adminApiUrl()}${path}`, { headers: headers(session.accessToken) });
     if (!r.ok) throw new Error(`${path.split("?")[0]} ${r.status}: ${(await r.text()).slice(0, 160)}`);
@@ -224,27 +228,31 @@ export async function approveReview(session: AdminSession, itemId: string, admin
     const list: any[] = Array.isArray(tasks?.data) ? tasks.data : Array.isArray(tasks) ? tasks : [];
     const review = list.filter((t) => t?.kind === "review" || t?.skill === "review").sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))[0];
     if (!review?.id) throw new Error("this card has no review task");
-    const last = [...(review.grades ?? [])].sort((a: any, b: any) => String(b.finishedAt ?? b.createdAt).localeCompare(String(a.finishedAt ?? a.createdAt)))[0] ?? {};
+    const last: Record<string, any> = [...(review.grades ?? [])].sort((a: any, b: any) => String(b.finishedAt ?? b.createdAt).localeCompare(String(a.finishedAt ?? a.createdAt)))[0] ?? {};
     let card: Record<string, any> | undefined = cardIn;
     if (!card) { const cardRaw = await get(`/cards/${itemId}`); card = cardRaw && typeof cardRaw === "object" && cardRaw.card ? cardRaw.card : cardRaw; }
-    card = card as Record<string, any>;
-
+    const c = card as Record<string, any>;
+    const started = startedAt ?? new Date(Date.now() - 2000);
+    const finished = new Date();
+    const fixed: Record<string, unknown> = {
+      status: "approved", kind: "review", name: reviewerName, graderId: grader.id, userId: adminUserId, gradingTaskId: review.id, cardId: itemId,
+      startedAt: started.toISOString(), finishedAt: finished.toISOString(), duration: Math.round((finished.getTime() - started.getTime())) / 1000,
+    };
+    const alias: Record<string, unknown> = {
+      setId: c.setId ?? c.gradingSetId, subsetId: c.subsetId ?? c.gradingSubsetId, parallelId: c.parallelId ?? c.gradingParallelId, cardTypeId: c.cardTypeId ?? c.gradingCardTypeId,
+    };
     const body: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(last)) if (!DROP.has(k)) body[k] = v;           // card details from the last review grade
-    for (const k of CARD_KEYS) if (card[k] !== undefined) body[k] = card[k];             // ...updated from the card itself
-    for (const [k, v] of Object.entries(card)) if (PIC.test(k)) body[k] = v;             // every picture link on the card
-    if (card.gradingSetId !== undefined) body.setId = card.gradingSetId;
-    if (card.gradingSubsetId !== undefined) body.subsetId = card.gradingSubsetId;
-    if (card.gradingParallelId !== undefined) body.parallelId = card.gradingParallelId;
-    for (const g of ["overall", "centering", "corners", "edges", "surface"]) if (card[g] !== undefined) body[g] = card[g];
-    Object.assign(body, links);                                                          // the label / slab just rebuilt
-    Object.assign(body, grades);                                                         // the new grades
-    const now = new Date();
-    Object.assign(body, {
-      status: "approved", kind: "review", name: reviewerName, graderId: grader.id, userId: adminUserId,
-      gradingTaskId: review.id, cardId: itemId, startedAt: new Date(now.getTime() - 1000).toISOString(), finishedAt: now.toISOString(), duration: 1,
-    });
-    delete body.grades;
+    for (const k of REVIEW_KEYS) {
+      let v: unknown;
+      if (k in fixed) v = fixed[k];
+      else if (k in grades) v = grades[k];
+      else if (k in links) v = links[k];
+      else if (c[k] !== undefined) v = c[k];
+      else if (alias[k] !== undefined) v = alias[k];
+      else if (last[k] !== undefined) v = last[k];
+      else v = null;
+      body[k] = v;
+    }
     const r = await fetch(`${config.adminApiUrl()}/grades/review`, { method: "POST", headers: headers(session.accessToken), body: JSON.stringify(body) });
     if (!r.ok) return { ok: false, status: r.status, error: (await r.text()).slice(0, 300) };
     const res = await r.json().catch(() => ({}));
@@ -262,6 +270,7 @@ export async function changeGradesLikeReview(session: AdminSession, itemId: stri
   const call = async (path: string, method: string, body?: unknown) =>
     fetch(`${config.adminApiUrl()}${path}`, { method, headers: headers(session.accessToken), body: body === undefined ? undefined : JSON.stringify(body) });
   const step = { label: 0, slab: 0, approve: 0 };
+  const started = new Date();
   try {
     const res = await call(`/cards/${itemId}`, "GET");
     if (!res.ok) return { ok: false, status: res.status, error: `load card: ${(await res.text()).slice(0, 200)}`, step };
@@ -288,9 +297,21 @@ export async function changeGradesLikeReview(session: AdminSession, itemId: stri
       if (links.frontSlabPictureUrl) links.frontV2SlabPictureUrl = links.frontSlabPictureUrl;
       if (links.backSlabPictureUrl) links.backV2SlabPictureUrl = links.backSlabPictureUrl;
     }
-    const a = await approveReview(session, itemId, adminUserId, reviewerName, links, g, card);
+    const a = await approveReview(session, itemId, adminUserId, reviewerName, links, g, card, started);
     step.approve = a.status;
     if (!a.ok) return { ok: false, status: a.status, error: `approve: ${a.error}`, step };
+    // check admin really changed the grades (reload the card; give it a moment)
+    let wrong: string[] = [];
+    for (const wait of [800, 2000, 4000]) {
+      await new Promise((r) => setTimeout(r, wait));
+      const vr = await call(`/cards/${itemId}`, "GET");
+      if (!vr.ok) continue;
+      const vraw = await vr.json().catch(() => ({}));
+      const now: Record<string, any> = vraw && vraw.card ? vraw.card : vraw;
+      wrong = Object.entries(g).filter(([k, v]) => Number(now[config.gradeField(k as any)]) !== Number(v)).map(([k, v]) => `${k} is ${now[config.gradeField(k as any)]}, not ${v}`);
+      if (!wrong.length) break;
+    }
+    if (wrong.length) return { ok: false, status: a.status, error: `approved, but admin didn't apply the new grades (${wrong.join(", ")})`, step };
     return { ok: true, status: a.status, grade_id: a.grade_id, rebuilt: !!links.frontLabelPictureUrl, step };
   } catch (e) {
     return { ok: false, status: 0, error: e instanceof Error ? e.message : String(e), step };
