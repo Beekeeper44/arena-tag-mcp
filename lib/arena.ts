@@ -175,7 +175,7 @@ export async function searchArena(text: string) {
   const p = parseRequest(raw.replace(/(?<![\d.])\d{6,12}(?![\d.])/g, " "), buildLexiconFromRows([]));
   const curTags = ([] as string[]).concat((p.filters.tag as string | string[] | undefined) ?? []).map((x) => String(x).toLowerCase());
   if (!orders.length) {
-    return { parsed: { action: p.action, tag: p.tag, mode: p.mode, filters: {}, post_filters: {} }, has_filter: false, queries: [], ms: Date.now() - t0, rows: [] as ArenaCard[], orders: [] as unknown[], missing: [] as string[] };
+    return { parsed: { action: p.action, tag: p.tag, mode: p.mode, filters: {}, post_filters: {} }, has_filter: false, queries: [], ms: Date.now() - t0, rows: [] as ArenaCard[], orders: [] as unknown[], missing: [] as string[], card_id: cardId(), check_card_id: checkCardId() };
   }
   const ps = await params();
   const chkId = checkCardId();
@@ -205,6 +205,7 @@ export async function searchArena(text: string) {
     const c = toCard(r, idKey, oi * 100000 + i, orders[oi]);
     const k = checkBy.get("ac:" + c.ac) ?? checkBy.get("id:" + c.item_id);
     if (k) Object.assign(c, { overall_check: k.result ?? c.overall_check, centering: k.centering, corners: k.corners, edges: k.edges, surface: k.surface, check_overall: k.overall, expected: k.expected, validation: k.validation });
+    if ((c as any).authentic) c.overall_check = "pass"; // Authentic (all 0s) counts as a pass
     byId.set(c.item_id, c);
   }));
   const everyCard = [...byId.values()];
@@ -235,5 +236,7 @@ export async function searchArena(text: string) {
     missing: summary.filter((x) => !x.total).map((x) => x.order),
     no_ids: rows.length > 0 && rows.every((r) => r.item_id.startsWith("noid:")),
     check_connected: !!chkId,
+    card_id: cardId(),
+    check_card_id: chkId,
   };
 }

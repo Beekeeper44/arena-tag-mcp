@@ -76,6 +76,9 @@ h1 span{color:var(--go)}
 .subg .gact{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:4px 12px}
 .subg .gact .ovuse{all:unset;cursor:pointer;color:var(--text);text-decoration:underline;font-size:12px;font-weight:700}
 .subg .gact .ovuse:hover{color:var(--go)}
+.subg .pass .auth{color:#b38f00}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]) .subg .pass .auth{color:#ffd400}}
+:root[data-theme="dark"] .subg .pass .auth{color:#ffd400}
 .subg .gsaved{grid-column:1/-1;color:var(--go);font-weight:800;font-size:12.5px}
 .subg.bad .gc.ov,.subg.bad .exp{border-top:1px solid color-mix(in srgb,#ff4d4f 35%,transparent);padding-top:6px}
 .subg .exp{border-top:1px solid color-mix(in srgb,#ff4d4f 35%,transparent);padding-top:6px}
@@ -634,6 +637,9 @@ async function find(text){
   S={sort:"high", only75:false, ge:{}, geOpen:{}, geSaved:{}, orders:res.orders||null, order:null, rm:[].concat(p.filters&&p.filters.tag||[]).map(t=>String(t).toLowerCase()), rmq:"", kind:KIND, text, queries:res.queries, action:p.action, mode:p.mode, filters:p.filters, post:p.post_filters, tag:p.tag||"", matched:res.cards, total:res.total, missing:res.missing||[], phase:"review", prev:new Map(), limit:240};
   $("#confirmBtn").hidden=false; $("#dryWrap").hidden=false;
   recompute(true);
+  if(S.kind==="arena"&&res.card_id){ const b=document.querySelector("#source b"); if(b) b.textContent=`Live · Metabase ${res.card_id}${res.check_card_id?` + Overall Check ${res.check_card_id}`:""}, fresh every search`;
+    if(Number(res.card_id)!==45739) $("#srcMsg").insertAdjacentHTML("afterbegin",`<div class="warn-txt small">Arena Club is reading question ${esc(String(res.card_id))}, not 45739 — ARENA_METABASE_CARD_ID is set in Vercel. Delete it (or set it to 45739) and redeploy.</div>`); }
+  if(S.kind==="arena") refreshLive();
 }
 function orderBox(locked){
   for(const x of S.orders){ const cs=S.matched.filter(c=>c.order_number===x.order); if(cs.length){ x.fails=cs.filter(c=>c.overall_check==="fail").length; x.low=cs.filter(isLow).length; } }
@@ -765,7 +771,7 @@ function subgBox(r){
   const exp=r.expected!=null?`<span class="exp"><i>Expected</i><b>${esc(r.expected)}</b></span>`:"";
   const acts=edit&&((fail&&r.expected!=null&&gNow(r,"overall")!==r.expected)||Object.keys(edits).length)?`<div class="gact">${fail&&r.expected!=null?`<button type="button" class="ovuse" data-geexp="${esc(id)}" data-v="${esc(r.expected)}">overall = expected ${esc(r.expected)}</button>`:""}${Object.keys(edits).length?`<button type="button" class="ovuse" data-gereset="${esc(id)}">reset</button>`:""}</div>`:"";
   return `<div class="subg${fail?" bad":""}${edit?" editing":""}">${cell("centering","Centering")}${cell("corners","Corners")}${cell("edges","Edges")}${cell("surface","Surface")}
-    ${fail?cell("overall","Overall")+exp:`${cell("overall","Overall")}${r.overall_check==="pass"?'<span class="pass">✓ PASS</span>':"<span></span>"}`}${acts}${S.geSaved&&S.geSaved[id]?'<span class="gsaved">saved ✓</span>':""}</div>`;
+    ${fail?cell("overall","Overall")+exp:`${cell("overall","Overall")}${r.authentic?'<span class="pass">✓ PASS · <span class="auth">AUTHENTIC</span></span>':r.overall_check==="pass"?'<span class="pass">✓ PASS</span>':"<span></span>"}`}${acts}${S.geSaved&&S.geSaved[id]?'<span class="gsaved">saved ✓</span>':""}</div>`;
 }
 // Back to the full search results without searching again. Cards that were just changed already show their new tag.
 function backToAll(){
@@ -774,6 +780,29 @@ function backToAll(){
   $("#confirmBtn").hidden=false; $("#dryWrap").hidden=false;
   recompute(true);
   window.scrollTo({top:Math.max(0,($("#summary").getBoundingClientRect().top+scrollY)-90),behavior:"smooth"});
+}
+// Arena Club: grades straight from admin (Metabase reads a copy that updates on a delay)
+async function refreshLive(){
+  const mine=S; if(!mine||!mine.matched.length) return;
+  const note=$("#srcMsg"); const base=note.innerHTML.replace(/<div class="dim small" style="margin-top:4px">(Checking live|✓ Grades checked live|Live check skipped)[\s\S]*?<\/div>/g,"");
+  note.innerHTML=base+`<div class="dim small" style="margin-top:4px">Checking live grades in admin…</div>`;
+  let live; try{ live=await api("live",{ids:mine.matched.map(r=>r.item_id)}); }catch(e){ note.innerHTML=base+`<div class="dim small" style="margin-top:4px">Live check skipped: ${esc(e.message)}</div>`; return; }
+  if(S!==mine) return; // a new search started meanwhile
+  let changed=0, auth=0;
+  const num=v=>v===null||v===undefined||v===""?null:Number(v);
+  for(const r of mine.matched){ const d=live[r.item_id]; if(!d) continue;
+    const before=JSON.stringify([r.grade_num,r.centering,r.corners,r.edges,r.surface,r.img,r.tag]);
+    const o=num(d.overall), gc=r.grading_company||"arena_club";
+    if(o!==null){
+      if(o===0){ r.authentic=true; r.grade_num=0; r.check_overall=0; r.overall_check="pass"; r.grade=gc+" authentic"; for(const k of ["centering","corners","edges","surface"]) if(num(d[k])!==null) r[k]=num(d[k]); auth++; }
+      else{ r.authentic=false; r.grade_num=o; r.check_overall=o; r.grade=gc+" "+o; for(const k of ["centering","corners","edges","surface"]){ const v=num(d[k]); if(v!==null&&v>0) r[k]=v; } } // 0 subgrade on a graded card = not overridden
+    }
+    if(d.frontSlabPictureUrl) r.img=d.frontSlabPictureUrl;
+    if(d.tag!==undefined) r.tag=d.tag||null;
+    if(JSON.stringify([r.grade_num,r.centering,r.corners,r.edges,r.surface,r.img,r.tag])!==before){ r.liveChanged=true; changed++; }
+  }
+  note.innerHTML=base+`<div class="dim small" style="margin-top:4px">✓ Grades checked live in admin${changed?` · <b class="ook">${changed} updated</b> (Metabase hadn't caught up yet)`:" · all match"}${auth?` · ${auth} authentic`:""}</div>`;
+  if(S.phase==="review") recompute(false); else render();
 }
 function rmChips(locked){
   const counts=new Map(); for(const r of S.matched) if(r.tag){const t=r.tag.toLowerCase(); counts.set(t,(counts.get(t)||0)+1);}
@@ -830,7 +859,8 @@ function renderInner(){
           <option value="high"${S.sort==="high"?" selected":""}>Grade: high → low</option>
           <option value="low"${S.sort==="low"?" selected":""}>Grade: low → high</option>
           <option value="low75"${S.sort==="low75"?" selected":""}>7.5 or lower / authentic first</option></select>
-        <button type="button" class="btn only75${S.only75?" on":""}" id="only75" aria-pressed="${!!S.only75}">${S.only75?"✓ ":""}Only ≤ 7.5 / auth</button></div>`:""}
+        <button type="button" class="btn only75${S.only75?" on":""}" id="only75" aria-pressed="${!!S.only75}">${S.only75?"✓ ":""}Only ≤ 7.5 / auth</button>
+        <button type="button" class="btn" id="liveBtn" title="Re-read every card's grades, slab and tag straight from admin (Metabase updates on a delay)">↻ Refresh from admin</button></div>`:""}
       ${locked?"":`<div class="selbar"><button class="btn link" type="button" id="all">Select all</button><button class="btn link" type="button" id="none">Clear</button></div>`}
     </div>
     ${S.missing&&S.missing.length&&!locked?`<div class="warn"><b>Nothing found for ${esc(S.missing.join(", "))}.</b> ${S.missing.length<[].concat(S.filters.player_name).length?"Showing only the names that matched.":"Nothing else was selected."}</div>`:""}
@@ -1083,6 +1113,7 @@ function bindSummary(){
     };
   }
   const gs=$("#gsort"); if(gs) gs.onchange=()=>{ S.sort=gs.value; recompute(false); };
+  const lb=$("#liveBtn"); if(lb) lb.onclick=async()=>{ lb.disabled=true; lb.textContent="Refreshing…"; await refreshLive(); };
   const o75=$("#only75"); if(o75) o75.onclick=()=>{ S.only75=!S.only75; recompute(true); };
   const bo=$("#backOrders"); if(bo) bo.onclick=()=>{ S.order=null; recompute(true); };
   document.querySelectorAll(".obtn").forEach(b=>b.onclick=()=>{ S.order=S.order===b.dataset.order?null:b.dataset.order; recompute(true); });
@@ -1152,10 +1183,20 @@ async function run(sel,dry){
   S.phase="done"; S.runId=res.run_id; S.dry=isDry; S.done=sel.filter(r=>written.has(r.item_id)); render();
   renderHistory();
   const verb=S.action==="set"?`tagged ${esc(S.tag)}`:"cleared";
-  const failNote=(res.failed||res.mismatch)?` <span style="color:var(--warn)">${(res.failed||0)+(res.mismatch||0)} failed — see Recent runs (${esc(res.run_id)}).</span>`:"";
+  const f0=(res.failures||[])[0];
+  const failNote=(res.failed||res.mismatch)?` <span style="color:var(--warn)">${(res.failed||0)+(res.mismatch||0)} failed${f0?` — admin said ${esc(String(f0.status??"?"))}: ${esc(String(f0.error||"no message").slice(0,200))}`:""} (run ${esc(res.run_id)}).</span>`:"";
   const skipNote=res.skipped_no_longer_matching?` <span class="dim">${res.skipped_no_longer_matching} no longer matched and were skipped.</span>`:"";
   $("#barmsg").innerHTML=isDry?`<b>Dry run done.</b> ${S.done.length} cards would be ${verb}. Nothing was written.${skipNote}`:
     `<b class="done-badge" style="font-size:14px">✓ ${S.done.length} cards ${verb}.</b>${failNote}${skipNote} ${S.done.length?`<button class="btn link" id="undoBtn" type="button">Undo</button>`:""}`;
+  // Arena Club: read the tag back from admin (Metabase lags), so we know it really landed
+  if(!isDry&&S.kind==="arena"&&written.size){
+    const want=S.action==="set"?S.tag:null, ids=[...written], msg=$("#barmsg");
+    msg.insertAdjacentHTML("beforeend",` <span class="dim" id="tagCheck">· checking admin…</span>`);
+    api("live",{ids}).then(live=>{ const el=$("#tagCheck"); if(!el) return;
+      const got=ids.filter(id=>live[id]&&((live[id].tag||null)===want)).length, seen=ids.filter(id=>live[id]).length;
+      el.outerHTML=seen?` <span class="${got===ids.length?"ook":"obad"}">· admin shows ${want?`<b>${esc(want)}</b>`:"no tag"} on ${got} of ${ids.length}</span>`:` <span class="dim">· couldn't read the cards back from admin</span>`;
+    }).catch(e=>{ const el=$("#tagCheck"); if(el) el.outerHTML=` <span class="dim">· admin check skipped: ${esc(e.message)}</span>`; });
+  }
   const u=$("#undoBtn"); if(u) u.onclick=async()=>{
     const restoring=S.done.map(r=>({tag:S.prev.get(r.item_id)}));
     const ok=await ask({title:`Undo ${S.runId}?`,

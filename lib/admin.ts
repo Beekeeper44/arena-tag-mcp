@@ -337,3 +337,23 @@ export async function changeGradesLikeReview(session: AdminSession, itemId: stri
     return { ok: false, status: 0, error: e instanceof Error ? e.message : String(e), step };
   }
 }
+
+// ---------- Live grades straight from admin (Metabase reads a delayed copy) ----------
+export async function liveCards(session: AdminSession, ids: string[]) {
+  const out: Record<string, Record<string, unknown>> = {};
+  const one = async (id: string) => {
+    if (!/^[0-9a-f-]{36}$/i.test(id)) return;
+    try {
+      const r = await fetch(`${config.adminApiUrl()}/cards/${id}`, { headers: headers(session.accessToken) });
+      if (!r.ok) return;
+      const raw = await r.json();
+      const c: Record<string, any> = raw && raw.card ? raw.card : raw;
+      const pick: Record<string, unknown> = {};
+      for (const k of ["overall", "centering", "corners", "edges", "surface", "frontSlabPictureUrl", "frontLabelPictureUrl", "backLabelPictureUrl", "tag", "status", "authenticationStatus"])
+        if (c[k] !== undefined) pick[k] = c[k];
+      out[id] = pick;
+    } catch { /* leave this card as Metabase had it */ }
+  };
+  for (let i = 0; i < ids.length; i += 8) await Promise.all(ids.slice(i, i + 8).map(one));
+  return out;
+}

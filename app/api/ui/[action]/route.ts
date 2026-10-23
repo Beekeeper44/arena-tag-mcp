@@ -3,6 +3,7 @@ import { config } from "@/lib/config";
 import { type CardFilters, type PostFilters } from "@/lib/metabase";
 import { runSelection, runWatchSelection, runArenaSelection, runOverallUpdate, runGradeUpdate, undoRun, listRuns } from "@/lib/runs";
 import { searchArena } from "@/lib/arena";
+import { openAdminSession, liveCards } from "@/lib/admin";
 import { listPrompts, addPrompt, renamePrompt, deletePrompt } from "@/lib/ui";
 import {
   can, type Role, type User, currentUser, sessionCookie, clearCookie, needsSetup, login, setupFirstAdmin, inviteInfo, acceptInvite,
@@ -98,6 +99,7 @@ export async function POST(req: Request, ctx: Ctx) {
         if (body.kind === "arena") {
           const a = await searchArena(String(body.text ?? ""));
           return json({ parsed: a.parsed, has_filter: a.has_filter, queries: [], ms: a.ms, total: a.rows.length, missing: a.missing, cards: a.rows, orders: a.orders,
+            card_id: (a as any).card_id, check_card_id: (a as any).check_card_id,
             check_connected: a.check_connected,
             notice: a.no_ids ? "The Arena Club question has no item id column, so these cards can be searched but not tagged yet." : !a.check_connected ? "Overall check isn't connected yet: set ARENA_CHECK_CARD_ID to the Overall Check question to color cards PASS / FAIL." : undefined });
         }
@@ -170,6 +172,12 @@ export async function POST(req: Request, ctx: Ctx) {
           text: str("text"), items: Array.isArray(body.items) ? (body.items as { item_id: string; grades: Record<string, number> }[]) : [],
           dry_run: body.dry_run === true, approve: body.approve === true, user: u.name, as_admin_user_id: adminLoginFor(u),
         }));
+      case "live": {
+        // current grades straight from admin for the cards on screen (Metabase lags behind)
+        const ids = (Array.isArray(body.ids) ? (body.ids as string[]) : []).slice(0, 2000);
+        const session = await openAdminSession(adminLoginFor(u));
+        try { return json(await liveCards(session, ids)); } finally { await session.revoke(); }
+      }
       case "undo":
         return json(await undoRun({ run_id: str("run_id"), confirm: true, requested_by: u.name, as_admin_user_id: adminLoginFor(u) }));
       case "prompts":
