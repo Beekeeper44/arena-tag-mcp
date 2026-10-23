@@ -3,8 +3,9 @@
 import { randomBytes } from "crypto";
 import { config, validateTag } from "./config";
 import { queryCards, queryCardsDetailed, summarize, type CardFilters, type CardRow, type PostFilters } from "./metabase";
-import { openAdminSession, patchTag, type WriteResult } from "./admin";
+import { openAdminSession, patchTag, regenerateImages, approveReview, type WriteResult, type WriteKind } from "./admin";
 import { searchWatches, watchLabel, type WatchRow } from "./watches";
+import { searchArena, type ArenaCard } from "./arena";
 import { q } from "./db";
 
 type Run = {
@@ -20,7 +21,7 @@ type Run = {
   dry_run: boolean | null;
   undo_of: string | null;
   expires_at: string;
-  kind: "card" | "watch";
+  kind: WriteKind;
 };
 
 const newId = () => "r_" + randomBytes(5).toString("hex");
@@ -171,7 +172,7 @@ async function executeWrites(
   items: { item_id: string; target: string | null }[],
   okStatus: string,
   adminUserId?: string,
-  kind: "card" | "watch" = "card"
+  kind: WriteKind = "card"
 ) {
   const session = await openAdminSession(adminUserId);
   let results: WriteResult[];
@@ -273,7 +274,13 @@ export async function undoRun(input: { run_id: string; confirm: boolean; request
      SELECT $1, t.item_id, $2, t.prev FROM unnest($3::text[], $4::text[]) AS t(item_id, prev)`,
     [undoId, run.tag, items.map((i) => i.item_id), items.map((i) => i.previous_tag)]
   );
-  const res = await executeWrites(undoId, items.map((i) => ({ item_id: i.item_id, target: i.previous_tag })), "restored", input.as_admin_user_id, run.kind);
+  // grade runs: only restore what was known before (an empty "{}" means nothing to put back)
+  const restore = run.kind === "grades" ? items.filter((i) => i.previous_tag && i.previous_tag !== "{}") : items;
+  const res = await executeWrites(undoId, restore.map((i) => ({ item_id: i.item_id, target: i.previous_tag })), "restored", input.as_admin_user_id, run.kind);
+  if (run.kind === "grades") {
+    const approved = !!(run.filters as any)?.approve;
+    Object.assign(res, await rebuildImages(res.written_ids, input.as_admin_user_id, approved ? { name: input.requested_by } : undefined));
+  }
   const status = res.failed || res.mismatch ? "partial" : "completed";
   await q(`UPDATE tag_runs SET status=$2, finished_at=now(), result=$3 WHERE id=$1`, [undoId, status, JSON.stringify(res)]);
   await q(`UPDATE tag_runs SET status='undone' WHERE id=$1 AND $2 = 'completed'`, [run.id, status]);
@@ -423,4 +430,157 @@ export async function runWatchSelection(input: {
   );
   const result = await goLive({ run_id: id, confirm: true, approved_by: input.user, dry_run: input.dry_run, as_admin_user_id: input.as_admin_user_id });
   return { ...result, skipped_no_longer_matching: dropped, previous: Object.fromEntries(chosen.map((r) => [r.item_id, r.tag])) };
+}
+
+// ---------- Arena Club orders: same one-step confirm, re-checked against a fresh pull of those orders ----------
+export async function runArenaSelection(input: {
+  text: string; action: "set" | "clear"; tag?: string | null; mode?: "overwrite" | "skip_tagged";
+  item_ids: string[]; dry_run?: boolean; user: string; as_admin_user_id?: string;
+}) {
+  const action = input.action;
+  const tag = action === "clear" ? null : (input.tag ?? "").trim();
+  if (action === "set") { const err = validateTag(tag as string); if (err) throw new Error(err); }
+  const wanted = [...new Set(input.item_ids)];
+  if (!wanted.length) throw new Error("No cards selected.");
+  if (wanted.length > config.maxItemsPerRun()) throw new Error(`${wanted.length} cards is over the ${config.maxItemsPerRun()}-item limit.`);
+  const fresh = await searchArena(input.text);
+  const rows = applyMode(fresh.rows, action, tag, input.mode ?? "overwrite");
+  const byId = new Map(rows.map((r) => [r.item_id, r]));
+  const chosen = wanted.map((id) => byId.get(id)).filter((r): r is ArenaCard => !!r);
+  if (!chosen.length) throw new Error("None of the selected cards still match. Search again.");
+  if (chosen.some((r) => r.item_id.startsWith("noid:"))) throw new Error("These cards have no item id in the Arena Club question, so they can't be tagged. Add the card's item id as a column.");
+  const id = newId();
+  const label = (r: ArenaCard) => [r.order_number && `order ${r.order_number}`, r.set_name, r.player_name, r.parallel_name, r.grade].filter(Boolean).join(" · ");
+  await q(
+    `INSERT INTO tag_runs (id, status, action, tag, mode, filters, post_filters, requested_by, preview_count, staged_by, staged_at, staged_count, expires_at, kind)
+     VALUES ($1,'staged',$2,$3,$4,$5,'{}',$6,$7,$6,now(),$7,$8,'card')`,
+    [id, action, tag, input.mode ?? "overwrite", JSON.stringify({ text: input.text, source: "arena_club", ...fresh.parsed.filters }), input.user, chosen.length, hoursFromNow(1)]
+  );
+  await q(
+    `INSERT INTO tag_run_items (run_id, item_id, previous_tag, new_tag, label, ev)
+     SELECT $1, t.item_id, t.prev, $2, t.label, t.ev FROM unnest($3::text[], $4::text[], $5::text[], $6::numeric[]) AS t(item_id, prev, label, ev)`,
+    [id, tag, chosen.map((r) => r.item_id), chosen.map((r) => r.tag), chosen.map(label), chosen.map((r) => r.ev)]
+  );
+  const result = await goLive({ run_id: id, confirm: true, approved_by: input.user, dry_run: input.dry_run, as_admin_user_id: input.as_admin_user_id });
+  return { ...result, skipped_no_longer_matching: wanted.length - chosen.length, previous: Object.fromEntries(chosen.map((r) => [r.item_id, r.tag])) };
+}
+
+// ---------- Arena Club: type a new overall grade on a card and save it to admin (logged, undoable) ----------
+// 0 is a grade (authentic, or centering 0 = no override); otherwise half steps up to 10
+const validGrade = (v: number) => Number.isFinite(v) && v >= 0 && v <= 10 && Math.round(v * 2) === v * 2;
+export async function runOverallUpdate(input: { text: string; items: { item_id: string; overall: number }[]; dry_run?: boolean; user: string; as_admin_user_id?: string }) {
+  const items = input.items.filter((x) => x && x.item_id);
+  if (!items.length) throw new Error("Type a new overall on at least one card.");
+  const bad = items.find((x) => !validGrade(Number(x.overall)));
+  if (bad) throw new Error(`"${bad.overall}" isn't a grade. Use 0 to 10 in half steps (e.g. 8.5).`);
+  if (items.length > config.maxItemsPerRun()) throw new Error(`${items.length} cards is over the ${config.maxItemsPerRun()}-item limit.`);
+  const fresh = await searchArena(input.text);
+  const byId = new Map(fresh.rows.map((r) => [r.item_id, r]));
+  const chosen = items.map((x) => ({ card: byId.get(x.item_id), overall: Number(x.overall) })).filter((x): x is { card: ArenaCard; overall: number } => !!x.card && !x.card.item_id.startsWith("noid:"));
+  if (!chosen.length) throw new Error("None of those cards are in these orders anymore. Search again.");
+  const changes = chosen.filter((x) => x.card.grade_num !== x.overall);
+  if (!changes.length) throw new Error("Those cards already have that overall.");
+  const dry = config.dryRun() || input.dry_run === true;
+  const id = newId();
+  await q(
+    `INSERT INTO tag_runs (id, status, action, tag, mode, filters, post_filters, requested_by, preview_count, staged_by, staged_at, staged_count, approved_by, live_at, dry_run, expires_at, kind)
+     VALUES ($1,'executing','overall',NULL,'overwrite',$2,'{}',$3,$4,$3,now(),$4,$3,now(),$5,$6,'overall')`,
+    [id, JSON.stringify({ text: input.text, source: "arena_club" }), input.user, changes.length, dry, hoursFromNow(1)]
+  );
+  await q(
+    `INSERT INTO tag_run_items (run_id, item_id, previous_tag, new_tag, label, ev)
+     SELECT $1, t.item_id, t.prev, t.next, t.label, t.ev FROM unnest($2::text[], $3::text[], $4::text[], $5::text[], $6::numeric[]) AS t(item_id, prev, next, label, ev)`,
+    [id, changes.map((x) => x.card.item_id), changes.map((x) => (x.card.grade_num == null ? null : String(x.card.grade_num))), changes.map((x) => String(x.overall)),
+     changes.map((x) => [`order ${x.card.order_number}`, x.card.player_name, `overall ${x.card.grade_num} → ${x.overall}`].join(" · ")), changes.map((x) => x.card.ev)]
+  );
+  if (dry) {
+    await q(`UPDATE tag_run_items SET status='dry_run', updated_at=now() WHERE run_id=$1`, [id]);
+    await q(`UPDATE tag_runs SET status='dry_run_completed', finished_at=now(), result=$2 WHERE id=$1`, [id, JSON.stringify({ would_write: changes.length })]);
+    return { run_id: id, status: "dry_run_completed", dry_run: true, would_write: changes.length, written_ids: [] as string[], succeeded: 0, failed: 0, mismatch: 0, failures: [] };
+  }
+  const res = await executeWrites(id, changes.map((x) => ({ item_id: x.card.item_id, target: String(x.overall) })), "written", input.as_admin_user_id, "overall");
+  const status = res.failed || res.mismatch ? "partial" : "completed";
+  await q(`UPDATE tag_runs SET status=$2, finished_at=now(), result=$3 WHERE id=$1`, [id, status, JSON.stringify(res)]);
+  return { run_id: id, status, dry_run: false, ...res };
+}
+
+// After grades change: rebuild label + slab images, and optionally approve (the review page's "Approve").
+// A failure here doesn't undo the grade save; it's reported per card.
+async function rebuildImages(ids: string[], adminUserId?: string, approve?: { name: string }) {
+  const res = { rebuilt: 0, rebuild_failed: [] as { item_id: string; error: string }[], approved: 0, approve_failed: [] as { item_id: string; error: string }[] };
+  if (!ids.length) return res;
+  const who = adminUserId || config.sessionUserId();
+  const session = await openAdminSession(adminUserId);
+  try {
+    await pool(ids, Math.min(3, config.writeConcurrency()), async (id) => {
+      let links: Record<string, unknown> = {};
+      if (config.regenerateImages()) {
+        const r = await regenerateImages(session, id);
+        if (r.error) res.rebuild_failed.push({ item_id: id, error: r.error }); else { res.rebuilt++; links = r.links; }
+      }
+      if (approve) {
+        const a = await approveReview(session, id, who, approve.name, links);
+        if (a.ok) res.approved++; else res.approve_failed.push({ item_id: id, error: a.error ?? `status ${a.status}` });
+      }
+    });
+    return res;
+  } finally {
+    await session.revoke();
+  }
+}
+
+// ---------- Arena Club: change any subgrade and/or the overall on cards (logged, undoable) ----------
+const GRADES = ["overall", "centering", "corners", "edges", "surface"] as const;
+type Grade = (typeof GRADES)[number];
+export async function runGradeUpdate(input: { text: string; items: { item_id: string; grades: Partial<Record<Grade, number>> }[]; dry_run?: boolean; approve?: boolean; user: string; as_admin_user_id?: string }) {
+  const items = input.items.filter((x) => x && x.item_id && x.grades && Object.keys(x.grades).length);
+  if (!items.length) throw new Error("Change at least one grade first.");
+  for (const x of items) for (const [k, v] of Object.entries(x.grades)) {
+    if (!(GRADES as readonly string[]).includes(k)) throw new Error(`Unknown grade "${k}".`);
+    if (!validGrade(Number(v))) throw new Error(`"${v}" isn't a grade. Use 0 to 10 in half steps (e.g. 8.5).`);
+  }
+  if (items.length > config.maxItemsPerRun()) throw new Error(`${items.length} cards is over the ${config.maxItemsPerRun()}-item limit.`);
+  const fresh = await searchArena(input.text);
+  const byId = new Map(fresh.rows.map((r) => [r.item_id, r]));
+  const now = (c: ArenaCard, g: Grade): number | null => {
+    const v = g === "overall" ? ((c as any).check_overall ?? c.grade_num) : (c as any)[g];
+    return v == null || v === "" ? null : Number(v);
+  };
+  const changes = items.flatMap((x) => {
+    const c = byId.get(x.item_id);
+    if (!c || c.item_id.startsWith("noid:")) return [];
+    const next: Record<string, number> = {}, prev: Record<string, number> = {};
+    for (const [k, v] of Object.entries(x.grades) as [Grade, number][]) {
+      const cur = now(c, k);
+      if (cur === Number(v)) continue;
+      next[k] = Number(v);
+      if (cur != null) prev[k] = cur; // undo restores only values we knew
+    }
+    return Object.keys(next).length ? [{ c, next, prev }] : [];
+  });
+  if (!changes.length) throw new Error("Nothing to save: those cards already have those grades.");
+  const dry = config.dryRun() || input.dry_run === true;
+  const id = newId();
+  const fmt = (o: Record<string, number>) => Object.entries(o).map(([k, v]) => `${k} ${v}`).join(", ");
+  await q(
+    `INSERT INTO tag_runs (id, status, action, tag, mode, filters, post_filters, requested_by, preview_count, staged_by, staged_at, staged_count, approved_by, live_at, dry_run, expires_at, kind)
+     VALUES ($1,'executing','grades',NULL,'overwrite',$2,'{}',$3,$4,$3,now(),$4,$3,now(),$5,$6,'grades')`,
+    [id, JSON.stringify({ text: input.text, source: "arena_club", approve: !!input.approve }), input.user, changes.length, dry, hoursFromNow(1)]
+  );
+  await q(
+    `INSERT INTO tag_run_items (run_id, item_id, previous_tag, new_tag, label, ev)
+     SELECT $1, t.item_id, t.prev, t.next, t.label, t.ev FROM unnest($2::text[], $3::text[], $4::text[], $5::text[], $6::numeric[]) AS t(item_id, prev, next, label, ev)`,
+    [id, changes.map((x) => x.c.item_id), changes.map((x) => JSON.stringify(x.prev)), changes.map((x) => JSON.stringify(x.next)),
+     changes.map((x) => [`order ${x.c.order_number}`, x.c.player_name, fmt(x.next)].join(" · ")), changes.map((x) => x.c.ev)]
+  );
+  if (dry) {
+    await q(`UPDATE tag_run_items SET status='dry_run', updated_at=now() WHERE run_id=$1`, [id]);
+    await q(`UPDATE tag_runs SET status='dry_run_completed', finished_at=now(), result=$2 WHERE id=$1`, [id, JSON.stringify({ would_write: changes.length })]);
+    return { run_id: id, status: "dry_run_completed", dry_run: true, would_write: changes.length, written_ids: [] as string[], succeeded: 0, failed: 0, mismatch: 0, failures: [] };
+  }
+  const res = await executeWrites(id, changes.map((x) => ({ item_id: x.c.item_id, target: JSON.stringify(x.next) })), "written", input.as_admin_user_id, "grades");
+  const images = await rebuildImages(res.written_ids, input.as_admin_user_id, input.approve ? { name: input.user } : undefined);
+  const status = res.failed || res.mismatch ? "partial" : "completed";
+  await q(`UPDATE tag_runs SET status=$2, finished_at=now(), result=$3 WHERE id=$1`, [id, status, JSON.stringify({ ...res, ...images })]);
+  return { run_id: id, status, dry_run: false, ...res, ...images };
 }

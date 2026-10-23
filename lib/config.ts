@@ -23,6 +23,15 @@ export const config = {
   watchCardId: () => num("WATCH_METABASE_CARD_ID", 45046),
   // Admin path that saves a watch's tag, e.g. /items/{id}. Live watch writes stay off until this is set.
   watchTagPath: () => process.env.WATCH_TAG_PATH || "",
+  // Field on PATCH /cards/{id} that holds the card's overall grade (Arena Club tile "New overall").
+  overallField: () => process.env.ARENA_OVERALL_FIELD || "overall",
+  // Admin field for each grade on PATCH /cards/{id} (Arena Club grade editor). ARENA_FIELD_CENTERING etc. override.
+  // Rebuild slab + label images after a grade change (like the admin review page). Set false to skip.
+  regenerateImages: () => (process.env.ARENA_REGENERATE_IMAGES ?? "true").toLowerCase() !== "false",
+  // Save the new label / slab links onto the card after rebuilding (set false if admin already keeps them on its own).
+  saveImageLinks: () => (process.env.ARENA_SAVE_IMAGE_LINKS ?? "true").toLowerCase() !== "false",
+  gradeField: (g: "overall" | "centering" | "corners" | "edges" | "surface") =>
+    g === "overall" ? process.env.ARENA_OVERALL_FIELD || "overall" : process.env[`ARENA_FIELD_${g.toUpperCase()}`] || g,
 
   // Admin (writes)
   adminApiUrl: () => (process.env.ADMIN_API_URL || "https://admin-api.arenaclub.com").replace(/\/+$/, ""),

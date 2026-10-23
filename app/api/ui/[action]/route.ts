@@ -1,7 +1,8 @@
 // JSON API for the Tag Bot screen. Everything except login needs the signed-in cookie.
 import { config } from "@/lib/config";
 import { type CardFilters, type PostFilters } from "@/lib/metabase";
-import { runSelection, runWatchSelection, undoRun, listRuns } from "@/lib/runs";
+import { runSelection, runWatchSelection, runArenaSelection, runOverallUpdate, runGradeUpdate, undoRun, listRuns } from "@/lib/runs";
+import { searchArena } from "@/lib/arena";
 import { listPrompts, addPrompt, renamePrompt, deletePrompt } from "@/lib/ui";
 import {
   can, type Role, type User, currentUser, sessionCookie, clearCookie, needsSetup, login, setupFirstAdmin, inviteInfo, acceptInvite,
@@ -94,6 +95,12 @@ export async function POST(req: Request, ctx: Ctx) {
   try {
     switch (action) {
       case "find": {
+        if (body.kind === "arena") {
+          const a = await searchArena(String(body.text ?? ""));
+          return json({ parsed: a.parsed, has_filter: a.has_filter, queries: [], ms: a.ms, total: a.rows.length, missing: a.missing, cards: a.rows, orders: a.orders,
+            check_connected: a.check_connected,
+            notice: a.no_ids ? "The Arena Club question has no item id column, so these cards can be searched but not tagged yet." : !a.check_connected ? "Overall check isn't connected yet: set ARENA_CHECK_CARD_ID to the Overall Check question to color cards PASS / FAIL." : undefined });
+        }
         if (body.kind === "watches") {
           const w = await searchWatches(String(body.text ?? ""));
           return json({ parsed: w.parsed, has_filter: w.has_filter, queries: [], ms: w.ms, total: w.rows.length, missing: w.missing, inventory: w.inventory, cards: w.rows.map(watchToTile), notice: w.notice, searched: w.searched });
@@ -120,6 +127,12 @@ export async function POST(req: Request, ctx: Ctx) {
         });
       }
       case "apply":
+        if (body.kind === "arena")
+          return json(await runArenaSelection({
+            text: str("text"), action: body.action === "clear" ? "clear" : "set", tag: (body.tag as string) ?? null,
+            mode: body.mode === "skip_tagged" ? "skip_tagged" : "overwrite", item_ids: Array.isArray(body.item_ids) ? (body.item_ids as string[]) : [],
+            dry_run: body.dry_run === true, user: u.name, as_admin_user_id: adminLoginFor(u),
+          }));
         if (body.kind === "watches")
           return json(
             await runWatchSelection({
@@ -147,6 +160,16 @@ export async function POST(req: Request, ctx: Ctx) {
             as_admin_user_id: adminLoginFor(u),
           })
         );
+      case "overall":
+        return json(await runOverallUpdate({
+          text: str("text"), items: Array.isArray(body.items) ? (body.items as { item_id: string; overall: number }[]) : [],
+          dry_run: body.dry_run === true, user: u.name, as_admin_user_id: adminLoginFor(u),
+        }));
+      case "grades":
+        return json(await runGradeUpdate({
+          text: str("text"), items: Array.isArray(body.items) ? (body.items as { item_id: string; grades: Record<string, number> }[]) : [],
+          dry_run: body.dry_run === true, approve: body.approve === true, user: u.name, as_admin_user_id: adminLoginFor(u),
+        }));
       case "undo":
         return json(await undoRun({ run_id: str("run_id"), confirm: true, requested_by: u.name, as_admin_user_id: adminLoginFor(u) }));
       case "prompts":

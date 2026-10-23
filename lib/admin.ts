@@ -63,7 +63,10 @@ function headers(accessToken: string): Record<string, string> {
 
 export type WriteResult = { ok: boolean; status: number; returnedTag?: string | null; error?: string };
 
-export async function patchTag(session: AdminSession, itemId: string, tag: string | null, kind: "card" | "watch" = "card"): Promise<WriteResult> {
+export type WriteKind = "card" | "watch" | "overall" | "grades";
+const GRADE_KEYS = ["overall", "centering", "corners", "edges", "surface"] as const;
+/** Writes one field on an item: the tag (cards / watches), or the card's overall grade (kind "overall"). */
+export async function patchTag(session: AdminSession, itemId: string, tag: string | null, kind: WriteKind = "card"): Promise<WriteResult> {
   if (!/^[0-9a-f-]{36}$/i.test(itemId)) return { ok: false, status: 0, error: "invalid item id" };
   const path = kind === "watch" ? config.watchTagPath() : "/cards/{id}";
   if (!path) return { ok: false, status: 0, error: "WATCH_TAG_PATH is not set" };
@@ -73,13 +76,18 @@ export async function patchTag(session: AdminSession, itemId: string, tag: strin
       const res = await fetch(url, {
         method: "PATCH",
         headers: headers(session.accessToken),
-        body: JSON.stringify({ tag }),
+        body: JSON.stringify(
+          kind === "grades"
+            ? Object.fromEntries(Object.entries(JSON.parse(tag || "{}") as Record<string, number>).filter(([k]) => (GRADE_KEYS as readonly string[]).includes(k)).map(([k, v]) => [config.gradeField(k as (typeof GRADE_KEYS)[number]), Number(v)]))
+            : kind === "overall" ? { [config.overallField()]: tag === null ? null : Number(tag) } : { tag }
+        ),
       });
       if (res.ok) {
         let returnedTag: string | null | undefined;
         try {
           const body = await res.json();
-          if (body && typeof body === "object" && "tag" in body) returnedTag = body.tag ?? null;
+          const field = kind === "grades" ? "\u0000" : kind === "overall" ? config.overallField() : "tag"; // grades: several fields, not compared
+          if (body && typeof body === "object" && field in body) returnedTag = body[field] == null ? null : kind === "overall" ? String(Number(body[field])) : body[field];
         } catch {
           /* non-JSON body is fine */
         }
@@ -133,5 +141,112 @@ export async function adminAccess(adminUserId: string) {
     return { ok: false, status: 0, detail: e instanceof Error ? e.message : String(e) };
   } finally {
     if (session) await session.revoke();
+  }
+}
+
+// After grades change, rebuild the label and slab images exactly the way the admin review page does, then keep them:
+//   1. GET /cards/{id}
+//   2. PATCH /cards/generate_label_images  (whole card) -> label + print-label links, labelVersion
+//   3. put those on the card the way the page does: storage.googleapis.com/arenaxlab/... -> assets.arenaclub.com/...?ixlib=react-9.7.0,
+//      V2 label fields = the label, trimmed pictures left as they are
+//   4. PATCH /cards/generate_slab_images   (that card) -> slab links
+//   5. PATCH /cards/{id} with the new label / V2 label / print label / slab links + labelVersion
+const LABEL_KEYS = ["frontLabelPictureUrl", "backLabelPictureUrl", "frontPrintLabelPictureUrl", "backPrintLabelPictureUrl"] as const;
+const asAsset = (u: unknown) => {
+  if (typeof u !== "string" || !u) return u;
+  const m = u.match(/^https:\/\/storage\.googleapis\.com\/arenaxlab\/(.+)$/);
+  if (!m) return u;
+  return `https://assets.arenaclub.com/${m[1]}${m[1].includes("?") ? "" : "?ixlib=react-9.7.0"}`;
+};
+export async function regenerateImages(session: AdminSession, itemId: string) {
+  const out = { label: 0, slab: 0, saved: 0, error: undefined as string | undefined, links: {} as Record<string, unknown> };
+  const call = async (path: string, method: string, body?: unknown) =>
+    fetch(`${config.adminApiUrl()}${path}`, { method, headers: headers(session.accessToken), body: body === undefined ? undefined : JSON.stringify(body) });
+  try {
+    const res = await call(`/cards/${itemId}`, "GET");
+    if (!res.ok) { out.error = `load card ${res.status}`; return out; }
+    const body = await res.json();
+    const card: Record<string, unknown> = body && typeof body === "object" && "card" in body && body.card && typeof body.card === "object" ? body.card : body;
+    const save: Record<string, unknown> = {};
+
+    const lr = await call(`/cards/generate_label_images`, "PATCH", card);
+    out.label = lr.status;
+    if (!lr.ok) { out.error = `generate_label_images ${lr.status}: ${(await lr.text()).slice(0, 200)}`; return out; }
+    const labels = (await lr.json().catch(() => ({}))) as Record<string, unknown>;
+    for (const k of LABEL_KEYS) if (labels[k]) save[k] = card[k] = asAsset(labels[k]);
+    if (save.frontLabelPictureUrl) save.frontV2LabelPictureUrl = card.frontV2LabelPictureUrl = save.frontLabelPictureUrl;
+    if (save.backLabelPictureUrl) save.backV2LabelPictureUrl = card.backV2LabelPictureUrl = save.backLabelPictureUrl;
+    if (labels.labelVersion != null) save.labelVersion = card.labelVersion = labels.labelVersion;
+    if (!save.frontLabelPictureUrl) { out.error = "generate_label_images returned no label"; return out; }
+
+    const sr = await call(`/cards/generate_slab_images`, "PATCH", card);
+    out.slab = sr.status;
+    if (!sr.ok) { out.error = `generate_slab_images ${sr.status}: ${(await sr.text()).slice(0, 200)}`; return out; }
+    const slabs = (await sr.json().catch(() => ({}))) as Record<string, unknown>;
+    for (const k of ["frontSlabPictureUrl", "backSlabPictureUrl"]) if (slabs[k]) save[k] = asAsset(slabs[k]);
+    if (!save.frontSlabPictureUrl) { out.error = "generate_slab_images returned no slab"; return out; }
+
+    // the Approve also carries the slab as the V2 slab
+    save.frontV2SlabPictureUrl = save.frontSlabPictureUrl;
+    if (save.backSlabPictureUrl) save.backV2SlabPictureUrl = save.backSlabPictureUrl;
+    out.links = save;
+    if (config.saveImageLinks()) {
+      const r = await call(`/cards/${itemId}`, "PATCH", save);
+      out.saved = r.status;
+      if (!r.ok) out.error = `save image links ${r.status}: ${(await r.text()).slice(0, 200)}`;
+    }
+  } catch (e) {
+    out.error = e instanceof Error ? e.message : String(e);
+  }
+  return out;
+}
+
+// ---------- Approve: same as clicking "Approve" on the admin review page ----------
+// POST /grades/review with a new grade record: status "approved", kind "review", the grades, gradingReport,
+// all picture links, the card's details, and who reviewed it (graderId from /users/{id}/grader,
+// gradingTaskId = the card's "review" grading task).
+const DROP = new Set(["id", "createdAt", "updatedAt", "verificationDuration", "isVerified", "verifierId", "notes", "verificationStatus"]);
+const CARD_KEYS = ["cardTypeId", "brand", "year", "gradingCompany", "gradingReport", "labelVersion", "team", "sport", "language", "slabKind", "isRookie", "isRelic",
+  "isFullArt", "holo", "insert", "edition", "rarity", "signature", "playerName", "setName", "setNumber", "parallelName", "parallelNumber", "parallelTotal",
+  "labelPlayerName", "labelSetName", "labelParallel", "searchBrand", "side", "subset", "design", "promo", "isShortPrint"];
+const PIC = /Picture(Url|Id)$/;
+export async function approveReview(session: AdminSession, itemId: string, adminUserId: string, reviewerName: string, links: Record<string, unknown> = {}) {
+  const get = async (path: string) => {
+    const r = await fetch(`${config.adminApiUrl()}${path}`, { headers: headers(session.accessToken) });
+    if (!r.ok) throw new Error(`${path.split("?")[0]} ${r.status}: ${(await r.text()).slice(0, 160)}`);
+    return r.json();
+  };
+  try {
+    const grader = await get(`/users/${adminUserId}/grader`);
+    if (!grader?.id) throw new Error("this admin login has no grader record, so it can't approve");
+    const tasks = await get(`/grading_tasks?limit=100&offset=0&search=&where=card_id=${itemId}`);
+    const list: any[] = Array.isArray(tasks?.data) ? tasks.data : Array.isArray(tasks) ? tasks : [];
+    const review = list.filter((t) => t?.kind === "review" || t?.skill === "review").sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))[0];
+    if (!review?.id) throw new Error("this card has no review task");
+    const last = [...(review.grades ?? [])].sort((a: any, b: any) => String(b.finishedAt ?? b.createdAt).localeCompare(String(a.finishedAt ?? a.createdAt)))[0] ?? {};
+    const cardRaw = await get(`/cards/${itemId}`);
+    const card: Record<string, any> = cardRaw && typeof cardRaw === "object" && cardRaw.card ? cardRaw.card : cardRaw;
+
+    const body: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(last)) if (!DROP.has(k)) body[k] = v;           // card details from the last review grade
+    for (const k of CARD_KEYS) if (card[k] !== undefined) body[k] = card[k];             // ...updated from the card itself
+    for (const [k, v] of Object.entries(card)) if (PIC.test(k)) body[k] = v;             // every picture link on the card
+    if (card.gradingSetId !== undefined) body.setId = card.gradingSetId;
+    if (card.gradingSubsetId !== undefined) body.subsetId = card.gradingSubsetId;
+    if (card.gradingParallelId !== undefined) body.parallelId = card.gradingParallelId;
+    for (const g of ["overall", "centering", "corners", "edges", "surface"]) if (card[g] !== undefined) body[g] = card[g];
+    Object.assign(body, links);                                                          // the label / slab just rebuilt
+    const now = new Date();
+    Object.assign(body, {
+      status: "approved", kind: "review", name: reviewerName, graderId: grader.id, userId: adminUserId,
+      gradingTaskId: review.id, cardId: itemId, startedAt: new Date(now.getTime() - 1000).toISOString(), finishedAt: now.toISOString(), duration: 1,
+    });
+    delete body.grades;
+    const r = await fetch(`${config.adminApiUrl()}/grades/review`, { method: "POST", headers: headers(session.accessToken), body: JSON.stringify(body) });
+    if (!r.ok) return { ok: false, status: r.status, error: (await r.text()).slice(0, 300) };
+    const res = await r.json().catch(() => ({}));
+    return { ok: true, status: r.status, grade_id: res?.id as string | undefined };
+  } catch (e) {
+    return { ok: false, status: 0, error: e instanceof Error ? e.message : String(e) };
   }
 }
