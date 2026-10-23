@@ -716,7 +716,7 @@ async function saveOverall(){
         S.geSaved[id]=true; delete S.ge[id]; });
       recompute(false); // re-sort by the new grades
       const nf=(r.rebuild_failed||[]).length;
-      $("#barmsg").innerHTML=`✓ Grades saved on <b>${r.succeeded}</b> card${r.succeeded===1?"":"s"}${r.failed?` · <span class="obad">${r.failed} failed</span>`:""}${r.rebuilt?` · slab &amp; label images rebuilt on ${r.rebuilt}`:""}${nf?` · <span class="obad">${nf} image${nf===1?"":"s"} not rebuilt — open in admin and save once</span>`:""}${r.approved?` · <b>approved ${r.approved}</b> (live)`:""}${(r.approve_failed||[]).length?` · <span class="obad">${r.approve_failed.length} not approved: ${esc(r.approve_failed[0].error)}</span>`:""}${!approve?` · <span class="dim">not approved — approve on the review page</span>`:""}. Run <b>${esc(r.run_id)}</b> — undo from Recent runs.`;
+      $("#barmsg").innerHTML=`${r.succeeded?"✓ ":""}Grades saved on <b>${r.succeeded}</b> card${r.succeeded===1?"":"s"}${r.failed||r.mismatch?` · <span class="obad">${(r.failed||0)+(r.mismatch||0)} failed — admin said ${esc(String((r.failures||[])[0]?.status??"?"))}: ${esc(String((r.failures||[])[0]?.error||"no message").slice(0,220))}</span>`:""}${r.rebuilt?` · slab &amp; label images rebuilt on ${r.rebuilt}`:""}${nf?` · <span class="obad">${nf} image${nf===1?"":"s"} not rebuilt — open in admin and save once</span>`:""}${r.approved?` · <b>approved ${r.approved}</b> (live)`:""}${(r.approve_failed||[]).length?` · <span class="obad">${r.approve_failed.length} not approved: ${esc(r.approve_failed[0].error)}</span>`:""}${!approve?` · <span class="dim">not approved — approve on the review page</span>`:""}. Run <b>${esc(r.run_id)}</b> — undo from Recent runs.`;
     }
     if(alsoTag){
       try{
