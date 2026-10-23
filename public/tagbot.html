@@ -77,6 +77,7 @@ h1 span{color:var(--go)}
 .subg .gact .ovuse{all:unset;cursor:pointer;color:var(--text);text-decoration:underline;font-size:12px;font-weight:700}
 .subg .gact .ovuse:hover{color:var(--go)}
 .subg .pass .auth{color:#b38f00}
+.subg .pass.rechk,.orechk{color:var(--warn)}
 @media (prefers-color-scheme: dark){:root:not([data-theme="light"]) .subg .pass .auth{color:#ffd400}}
 :root[data-theme="dark"] .subg .pass .auth{color:#ffd400}
 .subg .gsaved{grid-column:1/-1;color:var(--go);font-weight:800;font-size:12.5px}
@@ -653,16 +654,16 @@ async function find(text){
   if(S.kind==="arena") refreshLive();
 }
 function orderBox(locked){
-  for(const x of S.orders){ const cs=S.matched.filter(c=>c.order_number===x.order); if(cs.length){ x.fails=cs.filter(c=>c.overall_check==="fail").length; x.low=cs.filter(isLow).length; } }
-  const o=S.orders, tot=o.reduce((a,x)=>a+x.total,0), low=o.reduce((a,x)=>a+x.low,0), bad=o.every(x=>x.check_from_grade)?0:o.reduce((a,x)=>a+x.fails,0);
+  for(const x of S.orders){ const cs=S.matched.filter(c=>c.order_number===x.order); if(cs.length){ x.fails=cs.filter(c=>c.overall_check==="fail").length; x.rechk=cs.filter(c=>c.overall_check==="recheck").length; x.low=cs.filter(isLow).length; } }
+  const o=S.orders, tot=o.reduce((a,x)=>a+x.total,0), low=o.reduce((a,x)=>a+x.low,0), bad=o.every(x=>x.check_from_grade)?0:o.reduce((a,x)=>a+x.fails,0), rc=o.every(x=>x.check_from_grade)?0:o.reduce((a,x)=>a+(x.rechk||0),0);
   return `<div class="obox" role="group" aria-label="Orders">
-    <div class="ohead"><b>${o.length} order${o.length===1?"":"s"}</b> · ${tot} card${tot===1?"":"s"} · <b class="${low?"omag":""}">${low}</b> graded 7.5 or lower${o.some(x=>x.authentic)?` or authentic`:""}${bad?` · <span class="obad">${bad} failed the overall check</span>`:o.some(x=>x.checked)?` · <span class="ook">every checked card passes</span>`:""}.
+    <div class="ohead"><b>${o.length} order${o.length===1?"":"s"}</b> · ${tot} card${tot===1?"":"s"} · <b class="${low?"omag":""}">${low}</b> graded 7.5 or lower${o.some(x=>x.authentic)?` or authentic`:""}${bad?` · <span class="obad">${bad} failed the overall check</span>`:""}${rc?` · <span class="orechk">${rc} need${rc===1?"s":""} a recheck</span>`:""}${!bad&&!rc&&o.some(x=>x.checked)?` · <span class="ook">every checked card passes</span>`:""}.
       ${S.order?`Showing order <b>${esc(S.order)}</b> only.`:"Click an order to see only its cards."}
       ${S.order?`<div><button class="btn backall" type="button" id="backOrders">← Back to all ${o.length} orders</button></div>`:""}</div>
     <div class="olist">${o.map(x=>`<div class="orow${S.order===x.order?" on":""}${x.total?"":" none"}${x.low?" low75":""}">
       <button type="button" class="obtn" data-order="${esc(x.order)}" aria-pressed="${S.order===x.order}" ${locked||!x.total||x.shown===0?"disabled":""}>
         <span class="onum">Order <b>${esc(x.order)}</b></span>
-        <span class="ostat">${x.total?`${x.shown!=null&&x.shown!==x.total?`${x.shown} of `:""}${x.total} card${x.total===1?"":"s"} · <span class="${x.low?"omag":"ook"}">${x.low} ≤ 7.5${x.authentic?` (${x.authentic} auth)`:""}</span>${x.checked&&!x.check_from_grade?` · <span class="${x.fails?"obad":"ook"}">${x.fails?x.fails+" fail":x.checked===x.total?"✓ entire order passes":"✓ passes"}</span>`:""}`:"no cards found"}</span>
+        <span class="ostat">${x.total?`${x.shown!=null&&x.shown!==x.total?`${x.shown} of `:""}${x.total} card${x.total===1?"":"s"} · <span class="${x.low?"omag":"ook"}">${x.low} ≤ 7.5${x.authentic?` (${x.authentic} auth)`:""}</span>${x.checked&&!x.check_from_grade?` · ${x.fails?`<span class="obad">${x.fails} fail</span>`:""}${x.fails&&x.rechk?" · ":""}${x.rechk?`<span class="orechk">⟳ ${x.rechk} recheck</span>`:""}${!x.fails&&!x.rechk?`<span class="ook">${x.checked===x.total?"✓ entire order passes":"✓ passes"}</span>`:""}`:""}`:"no cards found"}</span>
       </button>
       ${x.url?`<a class="olink" href="${esc(x.url)}" target="_blank" rel="noopener" title="Open order ${esc(x.order)}" aria-label="Open order ${esc(x.order)}">↗</a>`:""}
     </div>`).join("")}</div></div>`;
@@ -728,8 +729,8 @@ async function saveOverall(){
     if(r.dry_run){ $("#barmsg").innerHTML=`Dry run — grades would change on <b>${r.would_write}</b> card${r.would_write===1?"":"s"}. Nothing was written.`; }
     else{
       (r.written_ids||[]).forEach(id=>{ const c=S.matched.find(x=>x.item_id===id), g=items.find(x=>x.item_id===id).grades;
-        if(c){ for(const [k,v] of Object.entries(g)){ if(k==="overall"){ c.grade_num=v; c.check_overall=v; c.grade=(c.grading_company||"arena_club")+" "+v; } else c[k]=v; }
-          if(c.overall_check==="fail"&&c.expected!=null&&Number(c.check_overall??c.grade_num)===Number(c.expected)){ c.overall_check="pass"; c.fixed=true; } }
+        if(c){ snapCheck(c); for(const [k,v] of Object.entries(g)){ if(k==="overall"){ c.grade_num=v; c.check_overall=v; c.grade=(c.grading_company||"arena_club")+" "+v; } else c[k]=v; }
+          recheck(c); }
         S.geSaved[id]=true; delete S.ge[id]; });
       recompute(false); // re-sort by the new grades
       const nf=(r.rebuild_failed||[]).length;
@@ -798,7 +799,7 @@ function subgBox(r){
   const exp=r.expected!=null?`<span class="exp"><i>Expected</i><b>${esc(r.expected)}</b></span>`:"";
   const acts=edit&&((fail&&r.expected!=null&&gNow(r,"overall")!==r.expected)||Object.keys(edits).length)?`<div class="gact">${fail&&r.expected!=null?`<button type="button" class="ovuse" data-geexp="${esc(id)}" data-v="${esc(r.expected)}">overall = expected ${esc(r.expected)}</button>`:""}${Object.keys(edits).length?`<button type="button" class="ovuse" data-gereset="${esc(id)}">reset</button>`:""}</div>`:"";
   return `<div class="subg${fail?" bad":""}${edit?" editing":""}">${cell("centering","Centering")}${cell("corners","Corners")}${cell("edges","Edges")}${cell("surface","Surface")}
-    ${fail?cell("overall","Overall")+exp:`${cell("overall","Overall")}${r.authentic?'<span class="pass">✓ PASS · <span class="auth">AUTHENTIC</span></span>':r.overall_check==="pass"?'<span class="pass">✓ PASS</span>':"<span></span>"}`}${acts}${S.geSaved&&S.geSaved[id]?'<span class="gsaved">saved ✓</span>':""}</div>`;
+    ${fail?cell("overall","Overall")+exp:`${cell("overall","Overall")}${r.authentic?'<span class="pass">✓ PASS · <span class="auth">AUTHENTIC</span></span>':r.overall_check==="pass"?'<span class="pass">✓ PASS</span>':r.overall_check==="recheck"?'<span class="pass rechk" title="Subgrades changed since Metabase ran the Overall Check. Search again once Metabase catches up, or check the overall by hand.">⟳ RECHECK</span>':"<span></span>"}`}${acts}${S.geSaved&&S.geSaved[id]?'<span class="gsaved">saved ✓</span>':""}</div>`;
 }
 // Back to the full search results without searching again. Cards that were just changed already show their new tag.
 function backToAll(){
@@ -807,6 +808,16 @@ function backToAll(){
   $("#confirmBtn").hidden=false; $("#dryWrap").hidden=false;
   recompute(true);
   window.scrollTo({top:Math.max(0,($("#summary").getBoundingClientRect().top+scrollY)-90),behavior:"smooth"});
+}
+// Overall check after grades change: Metabase's check was computed on the subgrades it saw.
+// Same subgrades -> compare overall with its expected; changed subgrades -> the expected is stale, so recheck.
+const SUBS=["centering","corners","edges","surface"];
+function snapCheck(c){ if(!c._ck) c._ck=Object.fromEntries(SUBS.map(k=>[k,c[k]==null?null:Number(c[k])])); }
+function recheck(c){
+  if(c.authentic||!c._ck) return;
+  const subChanged=SUBS.some(k=>(c[k]==null?null:Number(c[k]))!==c._ck[k]);
+  if(subChanged){ c.overall_check="recheck"; return; }
+  if(c.expected!=null){ const o=Number(c.check_overall??c.grade_num); const ok=o===Number(c.expected); if(ok&&c.overall_check!=="pass") c.fixed=true; c.overall_check=ok?"pass":"fail"; }
 }
 // Arena Club: grades straight from admin (Metabase reads a copy that updates on a delay)
 async function refreshLive(){
@@ -817,7 +828,8 @@ async function refreshLive(){
   if(S!==mine) return; // a new search started meanwhile
   let changed=0, auth=0;
   const num=v=>v===null||v===undefined||v===""?null:Number(v);
-  for(const r of mine.matched){ const d=live[r.item_id]; if(!d) continue;
+  let rechk=0;
+  for(const r of mine.matched){ const d=live[r.item_id]; if(!d) continue; snapCheck(r);
     const before=JSON.stringify([r.grade_num,r.centering,r.corners,r.edges,r.surface,r.img,r.tag]);
     const o=num(d.overall), gc=r.grading_company||"arena_club";
     if(o!==null){
@@ -827,8 +839,9 @@ async function refreshLive(){
     if(d.frontSlabPictureUrl) r.img=d.frontSlabPictureUrl;
     if(d.tag!==undefined) r.tag=d.tag||null;
     if(JSON.stringify([r.grade_num,r.centering,r.corners,r.edges,r.surface,r.img,r.tag])!==before){ r.liveChanged=true; changed++; }
+    if(o!==null&&o!==0){ recheck(r); if(r.overall_check==="recheck") rechk++; }
   }
-  note.innerHTML=base+`<div class="dim small" style="margin-top:4px">✓ Grades checked live in admin${changed?` · <b class="ook">${changed} updated</b> (Metabase hadn't caught up yet)`:" · all match"}${auth?` · ${auth} authentic`:""}</div>`;
+  note.innerHTML=base+`<div class="dim small" style="margin-top:4px">✓ Grades checked live in admin${changed?` · <b class="ook">${changed} updated</b> (Metabase hadn't caught up yet)`:" · all match"}${auth?` · ${auth} authentic`:""}${rechk?` · <b class="orechk">${rechk} need${rechk===1?"s":""} a recheck</b> (subgrades changed since the Overall Check ran)`:""}</div>`;
   if(S.phase==="review") recompute(false); else render();
 }
 function rmChips(locked){
@@ -1039,7 +1052,7 @@ function showInfo(id){
         ${row("Current tag",r.tag?`<span class="pill">${esc(r.tag)}</span>`:"no tag")}
         ${row("Status",esc(r.status))}
         ${row("Sport",esc(r.sport))}
-        ${r.kind==="arena"?row("Order",r.order_url?`<a href="${esc(r.order_url)}" target="_blank" rel="noopener"><b>${esc(r.order_number)}</b> ↗</a>`:`<b>${esc(r.order_number)}</b>`)+row("Overall check",r.overall_check==="pass"?'<span class="ook">✓ PASS</span>':r.overall_check==="fail"?'<span class="obad">✗ FAIL</span>':'<span class="dim">not checked</span>')
+        ${r.kind==="arena"?row("Order",r.order_url?`<a href="${esc(r.order_url)}" target="_blank" rel="noopener"><b>${esc(r.order_number)}</b> ↗</a>`:`<b>${esc(r.order_number)}</b>`)+row("Overall check",r.overall_check==="pass"?'<span class="ook">✓ PASS</span>':r.overall_check==="fail"?'<span class="obad">✗ FAIL</span>':r.overall_check==="recheck"?'<span class="orechk">⟳ RECHECK · subgrades changed in admin</span>':'<span class="dim">not checked</span>')
           +row("Subgrades",r.centering!=null?`centering <b>${r.centering}</b> · corners <b>${r.corners??"–"}</b> · edges <b>${r.edges??"–"}</b> · surface <b>${r.surface??"–"}</b>`:"")
           +row("Overall / expected",r.expected!=null?`<b>${r.check_overall??r.grade_num??"–"}</b> / <b class="${r.overall_check==="fail"?"obad":""}">${r.expected}</b>`:(r.grade_num!=null?esc(String(r.grade_num)):""))+row("PO",esc(r.po_number))+row("Last comp",r.last_comp!=null?money(r.last_comp):""):""}
         ${row("Card number",esc(r.set_number))}${row("Cert",esc(r.cert))}${row("AC number",esc(r.ac))}
