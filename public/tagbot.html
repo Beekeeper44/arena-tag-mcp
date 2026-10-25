@@ -532,8 +532,11 @@ dialog .acts{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}
 .stchip.ast:hover{opacity:1}
 .stchip.ast.on{opacity:1;background:color-mix(in srgb,currentColor 32%,transparent);box-shadow:0 0 0 2px color-mix(in srgb,currentColor 45%,transparent)}
 .ablk .ast,.aspecs .ast{font-size:11px;line-height:1.3;padding:0 7px}
-.aspecs dt,.aspecs dd{height:19px;line-height:19px}
+.aspecs dt,.aspecs dd{height:20px;line-height:20px}
 .aspecs dd .ast,.aspecs dd .aauth{vertical-align:middle}
+/* Pills inside one-line rows: sized to fit the row so nothing is cut off */
+:root .aspecs .ast.ast,:root .ablk .ast.ast,:root .aspecs .aauth.au-not_accepted.au-not_accepted,:root .ablk .aauth.au-not_accepted.au-not_accepted{font-size:11px;line-height:14px;padding:0 7px;border-width:1.5px;box-sizing:border-box;max-width:100%}
+.aspecs dd .a1,.ablk dd .a1{line-height:20px;height:20px}
 .facts .ast{font-size:11px;line-height:1.4;padding:0 7px;margin-top:1px}
 
 /* More status colors (from admin): shipped, pending_rescan / pending_data_issue, pending_customer_support */
@@ -562,12 +565,25 @@ dialog .acts{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}
 .stchip.ast.st-inprog.on{box-shadow:0 0 0 2px #d9714f}
 
 /* "Click Me" links (card / order URLs): neon green on every tile and in every popup */
+/* Copy buttons: no text selection, clear "Copied" feedback */
+.cp{user-select:none;-webkit-user-select:none;position:relative;cursor:pointer}
+.cp.done,.cp.fail{border-color:#39ff14!important;color:#39ff14!important}
+.cp.fail{border-color:#ff5a52!important;color:#ff5a52!important}
+.cp.done::after,.cp.fail::after{content:attr(data-msg);position:absolute;bottom:calc(100% + 6px);left:50%;transform:translateX(-50%);white-space:nowrap;font-size:11px;font-weight:800;padding:3px 8px;border-radius:6px;background:#0b1a0d;color:#39ff14;border:1px solid #39ff14;z-index:20;pointer-events:none}
+.cp.fail::after{color:#ff5a52;border-color:#ff5a52}
+.cp:focus-visible{outline:2px solid #39ff14;outline-offset:2px}
 .clickme,.clickme:visited{color:#1a9e00!important;font-weight:800;text-decoration:underline;text-underline-offset:2px}
 .clickme:hover{color:#0f7a00!important}
 @media (prefers-color-scheme: dark){:root:not([data-theme="light"]) .clickme,:root:not([data-theme="light"]) .clickme:visited{color:#39ff14!important;text-shadow:0 0 6px rgba(57,255,20,.45)}:root:not([data-theme="light"]) .clickme:hover{color:#8dff6e!important}}
 :root[data-theme="dark"] .clickme,:root[data-theme="dark"] .clickme:visited{color:#39ff14!important;text-shadow:0 0 6px rgba(57,255,20,.45)}
 :root[data-theme="dark"] .clickme:hover{color:#8dff6e!important}
 a.btn.clickme{border-color:currentColor!important;text-decoration:none}
+
+/* Status gets the full card width (the pill says what it is), up to 2 lines, so long statuses are never cut off */
+#grid .aspecs:not(.wids) > dt:first-child{display:none}
+#grid .aspecs:not(.wids) > dt:first-child + dd{grid-column:1/-1;height:38px!important;line-height:normal!important;display:flex!important;align-items:center;overflow:visible!important;white-space:normal!important}
+#grid .aspecs:not(.wids) > dt:first-child + dd .a1{height:auto!important;line-height:normal!important;overflow:visible!important;white-space:normal!important;display:block}
+:root #grid .aspecs:not(.wids) > dt:first-child + dd .ast.ast{white-space:normal;overflow:visible;text-overflow:clip;max-width:100%;font-size:11.5px;line-height:15px;padding:1px 9px;border-radius:10px;word-break:normal;overflow-wrap:anywhere}
 </style>
 <script>try{const t=localStorage.getItem("tb_theme");if(t)document.documentElement.dataset.theme=t}catch{}</script>
 </head>
@@ -1043,7 +1059,7 @@ async function statusRun(dry){
   if(!ok) return;
   const cb=$("#confirmBtn"); cb.disabled=true; $("#barmsg").innerHTML=`<span class="spin"></span>${dry?"Dry run":"Writing to admin"}… ${hit.length} cards`;
   let res;
-  try{ res=await api("status",{kind:S.kind,view:S.view,text:S.text,key:a.key,op:a.op,note,notes,item_ids:hit.map(r=>r.item_id),dry_run:dry}); }
+  try{ res=await api("status",{kind:S.kind,view:S.kind==="arena"?"arena":S.view,text:S.text,key:a.key,op:a.op,note,notes,item_ids:hit.map(r=>r.item_id),dry_run:dry}); }
   catch(e){ cb.disabled=false; $("#barmsg").innerHTML=`<span style="color:var(--warn)">${esc(e.message)}</span>`; return; }
   const field=v.field==="auth"?"auth_status":"status";
   if(!res.dry_run){ const to=new Map((res.changes||[]).map(c=>[c.item_id,c.to])); for(const r of S.matched) if((res.written_ids||[]).includes(r.item_id)){ r[field]=to.get(r.item_id); if(a.op==="apply"&&v.note&&notes[r.item_id]) r.notes=[{side:null,issue:v.label,note:notes[r.item_id],logged_at:new Date().toISOString(),note_type:"Note"},...(r.notes||[])]; } }
@@ -1344,7 +1360,7 @@ function renderInner(){
         <button type="button" class="btn" id="archLiveBtn" title="Re-read every card's status, authentication status, tag and photo straight from admin (Metabase updates on a delay)">↻ Refresh from admin</button>`:""}</div>
       ${locked?"":`<div class="selbar"><button class="btn link" type="button" id="all">Select all</button><button class="btn link" type="button" id="none">Clear</button></div>`}
     </div>
-    ${ARCHK(S.kind)?`<div class="sactwrap">${statusActions(locked)}</div>`:""}
+    ${ARCHK(S.kind)||S.kind==="arena"?`<div class="sactwrap">${statusActions(locked)}</div>`:""}
     ${S.missing&&S.missing.length&&!locked?`<div class="warn"><b>Nothing found for ${esc(S.missing.join(", "))}.</b> ${S.missing.length<[].concat(S.filters.player_name).length?"Showing only the names that matched.":"Nothing else was selected."}</div>`:""}
     ${replacing&&!locked?`<div class="warn"><b>${replacing} selected ${replacing===1?"card already has":"cards already have"} a different tag.</b> A card holds one tag, so it will be replaced. Tick "Skip cards that already have a tag" or deselect them to keep it.</div>`:""}
   </div>`;
@@ -1405,7 +1421,7 @@ function tile(r){
   </button></div>`);
 }
 const COPY_ICON=`<svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true"><rect x="5" y="5" width="8.5" height="8.5" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M3.5 10.5h-.5A1.5 1.5 0 0 1 1.5 9V3A1.5 1.5 0 0 1 3 1.5h6A1.5 1.5 0 0 1 10.5 3v.5" fill="none" stroke="currentColor" stroke-width="1.4"/></svg>`;
-const cp=v=>`<span class="cp" role="button" data-copy="${esc(v)}" title="Copy ${esc(v)}" aria-label="Copy ${esc(v)}">${COPY_ICON}</span>`;
+const cp=v=>`<span class="cp" role="button" tabindex="0" data-copy="${esc(v)}" title="Copy ${esc(v)}" aria-label="Copy ${esc(v)}">${COPY_ICON}</span>`;
 // Archived card: what the archive log says about it
 const ARCH_DT=v=>{ if(!v) return ""; const d=new Date(String(v).replace(" ","T")); return isNaN(d)?String(v):d.toLocaleString([], {month:"short",day:"numeric",hour:"numeric",minute:"2-digit"}); };
 // Status colors: pending_rescan light red, not_accepted red, other statuses amber
@@ -1431,12 +1447,12 @@ function asWatch(r){
 function archRows(r){
   const x=(r.notes||[])[0]||{}, more=(r.notes||[]).length-1, dash='<span class="dim">—</span>';
   const row=(k,v,t)=>`<dt>${k}</dt><dd${t?` title="${esc(t)}"`:""}><span class="a1">${v==null||v===""?dash:v}</span></dd>`;
-  return `<dl class="wspecs aspecs ablk">${row("Status",stHtml(r.status),r.status)}${row("Auth",authHtml(r.auth_status),r.auth_status)}${row("Side",x.side?`<span class="aside">${esc(x.side)}</span>`:"")}${row("Issue",x.issue?`<b>${esc(x.issue)}</b>`:"",x.issue)}${row("Note",x.note?esc(x.note)+(more>0?` <span class="dim">(+${more})</span>`:""):"",x.note)}</dl>`;
+  return `<dl class="wspecs aspecs ablk">${row("Status",stHtml(r.status,1),r.status)}${row("Auth",authHtml(r.auth_status),r.auth_status)}${row("Side",x.side?`<span class="aside">${esc(x.side)}</span>`:"")}${row("Issue",x.issue?`<b>${esc(x.issue)}</b>`:"",x.issue)}${row("Note",x.note?esc(x.note)+(more>0?` <span class="dim">(+${more})</span>`:""):"",x.note)}</dl>`;
 }
 function orderRows(r){
   const dash='<span class="dim">—</span>', row=(k,v,t)=>`<dt>${k}</dt><dd${t?` title="${esc(t)}"`:""}><span class="a1">${v==null||v===""?dash:v}</span></dd>`;
   const own=r.owner_full_name||r.order_full_name||r.order_owner||"";
-  return `<dl class="wspecs aspecs ablk">${row("Status",stHtml(r.status),r.status)}${row("Owner",esc(own),[own,r.owner_type].filter(Boolean).join(" · "))}${row("Order",r.order_number?`<b>${esc(r.order_number)}</b>`:"")}${row("Total cards",r.cards_in_order!=null?String(r.cards_in_order):"")}${row("Warehouse",r.in_warehouse==null?"":/^(true|yes|1)$/i.test(String(r.in_warehouse))?"yes":/^(false|no|0)$/i.test(String(r.in_warehouse))?"no":esc(r.in_warehouse))}${row("Card URL",r.card_url?`<span class="alink clickme" role="link" tabindex="0" data-href="${esc(r.card_url)}" title="Open card in admin">Click Me</span>`:"")}${row("Order URL",r.order_url?`<span class="alink clickme" role="link" tabindex="0" data-href="${esc(r.order_url)}" title="Open order in admin">Click Me</span>`:"")}</dl>`;
+  return `<dl class="wspecs aspecs ablk">${row("Status",stHtml(r.status,1),r.status)}${row("Owner",esc(own),[own,r.owner_type].filter(Boolean).join(" · "))}${row("Order",r.order_number?`<b>${esc(r.order_number)}</b>`:"")}${row("Total cards",r.cards_in_order!=null?String(r.cards_in_order):"")}${row("Warehouse",r.in_warehouse==null?"":/^(true|yes|1)$/i.test(String(r.in_warehouse))?"yes":/^(false|no|0)$/i.test(String(r.in_warehouse))?"no":esc(r.in_warehouse))}${row("Card URL",r.card_url?`<span class="alink clickme" role="link" tabindex="0" data-href="${esc(r.card_url)}" title="Open card in admin">Click Me</span>`:"")}${row("Order URL",r.order_url?`<span class="alink clickme" role="link" tabindex="0" data-href="${esc(r.order_url)}" title="Open order in admin">Click Me</span>`:"")}</dl>`;
 }
 function withOrder(html,r){ return html.replace('<div class="tagchange">',orderRows(r)+'<div class="tagchange">'); }
 function withArch(html,r){ return html.replace('<div class="tagchange">',archRows(r)+'<div class="tagchange">'); }
@@ -1448,7 +1464,7 @@ function archTile(r,on,change){
   const sub=[r.set_name,r.insert,r.set_number&&"#"+r.set_number,r.parallel_name].filter(Boolean).join(" · ");
   const d=x.logged_at?new Date(String(x.logged_at).replace(" ","T")):null;
   const logged=d&&!isNaN(d)?d.toLocaleString([], {month:"numeric",day:"numeric",hour:"numeric",minute:"2-digit"}):(x.logged_at||"");
-  const specs=row("Status",stHtml(r.status),r.status)+row("Auth",authHtml(r.auth_status),r.auth_status)+row("Owner",esc(r.order_owner||""),r.order_owner)
+  const specs=row("Status",stHtml(r.status,1),r.status)+row("Auth",authHtml(r.auth_status),r.auth_status)+row("Owner",esc(r.order_owner||""),r.order_owner)
     +row("Value",esc(r.value_range||""))+row("Side",x.side?`<span class="aside">${esc(x.side)}</span>`:"")+row("Issue",x.issue?`<b>${esc(x.issue)}</b>`:"",x.issue)
     +row("Note",x.note?esc(x.note)+(more>0?` <span class="dim">(+${more})</span>`:""):"",x.note)+row("Logged",logged?esc(logged)+" PT":"");
   const ids=row("Card",r.card_url?`<span class="alink clickme" role="link" tabindex="0" data-href="${esc(r.card_url)}" title="Open card in admin">Click Me</span>`:"")
@@ -1523,12 +1539,20 @@ function watchTile(r,on,change){
     <div class="tagchange">${change}</div>
   </button></div>`;
 }
-// copy buttons inside tiles: copy, don't select
+// copy buttons inside tiles: copy, don't select. Falls back to the old copy command where the clipboard API is blocked (previews, some browsers)
+function copyText(v){
+  const legacy=()=>{ const t=document.createElement("textarea"); t.value=v; t.setAttribute("readonly",""); t.style.cssText="position:fixed;left:-9999px;top:0;opacity:0"; document.body.appendChild(t); t.select(); t.setSelectionRange(0,v.length); let ok=false; try{ ok=document.execCommand("copy"); }catch{} t.remove(); return ok; };
+  if(navigator.clipboard&&window.isSecureContext) return navigator.clipboard.writeText(v).then(()=>true).catch(()=>legacy());
+  return Promise.resolve(legacy());
+}
+document.addEventListener("mousedown",e=>{ if(e.target.closest&&e.target.closest(".cp")) e.preventDefault(); },true);
 document.addEventListener("click",e=>{
   const c=e.target.closest&&e.target.closest(".cp"); if(!c) return;
   e.preventDefault(); e.stopPropagation();
-  navigator.clipboard.writeText(c.dataset.copy).then(()=>{c.classList.add("done");setTimeout(()=>c.classList.remove("done"),900)}).catch(()=>{});
+  const sel=window.getSelection&&window.getSelection(); if(sel) sel.removeAllRanges();
+  copyText(c.dataset.copy).then(ok=>{ c.classList.remove("done","fail"); c.classList.add(ok?"done":"fail"); c.dataset.msg=ok?`Copied ${c.dataset.copy}`:"Couldn't copy"; setTimeout(()=>c.classList.remove("done","fail"),1300); });
 },true);
+document.addEventListener("keydown",e=>{ const c=e.target.closest&&e.target.closest(".cp"); if(c&&(e.key==="Enter"||e.key===" ")){ e.preventDefault(); c.click(); } },true);
 /* ---------- clear the white background off watch photos ---------- */
 const CLEAR_CACHE=new Map();
 function proxied(src){ return /^(data:|blob:)/.test(src)||src.startsWith(location.origin)?src:"/api/ui/img?u="+encodeURIComponent(src); }
@@ -1687,7 +1711,7 @@ $("#info").addEventListener("close",()=>{WI=null});
 function renderBar(n,replacing){
   const bar=$("#bar"); bar.hidden=false;
   const cb=$("#confirmBtn"), msg=$("#barmsg");
-  if(S&&ARCHK(S.kind)&&S.sact&&S.phase==="review"){
+  if(S&&(ARCHK(S.kind)||S.kind==="arena")&&S.sact&&S.phase==="review"){
     const a=S.sact, v=SACTS[a.key], {hit,skip}=saTargets(), needNote=a.op==="apply"&&v.note&&hit.some(r=>!cardNote(r,a.key,S.snote));
     cb.hidden=false; cb.disabled=!hit.length||needNote; cb.className="btn big "+(a.op==="apply"?"primary":"danger");
     cb.textContent=`${a.op==="apply"?"Set":"Remove"} ${v.value} (${hit.length})`;
@@ -1762,7 +1786,7 @@ function ask({title,body,yes,danger=false,word=null}){
 const tagCounts=rows=>{const m=new Map();rows.forEach(r=>{const k=r.tag||"(no tag)";m.set(k,(m.get(k)||0)+1)});return `<ul class="taglist">${[...m].sort((a,b)=>b[1]-a[1]).map(([t,n])=>`<li><span>${esc(t)}</span><span>${n}</span></li>`).join("")}</ul>`};
 
 $("#confirmBtn").onclick=async()=>{
-  if(S&&ARCHK(S.kind)&&S.sact) return statusRun($("#dry").checked);
+  if(S&&(ARCHK(S.kind)||S.kind==="arena")&&S.sact) return statusRun($("#dry").checked);
   const sel=S.rows.filter(r=>S.selected.has(r.item_id));
   const dry=$("#dry").checked;
   const dryNote=dry?"<b>Dry run:</b> records what would change without writing to admin.<br><br>":"";

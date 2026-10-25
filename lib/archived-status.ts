@@ -1,4 +1,4 @@
-// Archived tile: change a card's status from TAG-BOT.
+// Archived, Precision Labeling and Arena Club tiles: change a card's status from TAG-BOT.
 //   Not accepted   apply / remove   (authentication status)
 //   Pending rescan apply / remove   (card status; a note is required to apply)
 //   Archive        apply / remove   (card status; a note is required to apply)
@@ -96,7 +96,7 @@ async function liveList(view: string, ids: string[], asAdmin?: string) {
     sport: null, ev_date: null, ev_age_days: null, po_number: null, times_sold_back: null, purchase_location: null,
     brand: null, title: null, reference: null, dial: null, movement: null, size: null, material: null, bracelet: null, gender: null, condition: null, box: null, papers: null, purchase_cost: null,
   }));
-  return { rows, view: view as ArchivedCard["view"], view_label: view === "arch_watches" ? "Archived watches" : "Archived cards" };
+  return { rows, view: view as ArchivedCard["view"], view_label: view === "arena" ? "Arena Club" : view === "arch_watches" ? "Archived watches" : "Archived cards" };
 }
 
 export async function runArchivedStatus(input: {
@@ -108,7 +108,7 @@ export async function runArchivedStatus(input: {
   const note = (input.note ?? "").trim();
   // Archive builds a note per card (value side issue + typed text); Pending rescan uses the typed note
   // (Cards / Watches pills: the page builds the note from the card it shows, since admin's card record has no archive issue)
-  const liveView = input.view === "arch_cards" || input.view === "arch_watches";
+  const liveView = input.view === "arch_cards" || input.view === "arch_watches" || input.view === "arena";
   const noteFor = (c: ArchivedCard) => (key === "archive" ? (liveView && input.notes?.[c.item_id]?.trim() ? input.notes[c.item_id].trim().slice(0, 500) : archiveNote(c, note)) : note);
   if (op === "apply" && act.note && key !== "archive" && !note) throw new Error(`${act.label} needs a note.`);
   const wanted = [...new Set(input.item_ids)];
@@ -116,7 +116,7 @@ export async function runArchivedStatus(input: {
   if (wanted.length > config.maxItemsPerRun()) throw new Error(`${wanted.length} cards is over the ${config.maxItemsPerRun()}-card limit.`);
 
   // Archived → Cards / Watches use the Cards / Watches searches, so read each card's current status straight from admin
-  const live = input.view === "arch_cards" || input.view === "arch_watches";
+  const live = input.view === "arch_cards" || input.view === "arch_watches" || input.view === "arena";
   const fresh = live ? await liveList(String(input.view), wanted, input.as_admin_user_id) : await searchArchived(input.view, input.text);
   const byId = new Map(fresh.rows.map((r) => [r.item_id, r]));
   const cards = wanted.map((id) => byId.get(id)).filter((c): c is ArchivedCard => !!c && !c.item_id.startsWith("noid:"));
