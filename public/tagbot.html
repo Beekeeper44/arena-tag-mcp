@@ -963,7 +963,7 @@ async function demoApi(path,body){
     return {restored_ids:Object.keys(prev),restored:Object.keys(prev).length,failed:0,previous:prev};
   }
   if(path==="undo") return {ok:true,restored:0};
-  if(path==="live"){ const out={}, ids=(body&&body.ids)||[]; for(const list of Object.values(DEMO_DB)) for(const c of list) if(ids.includes(c.item_id)) out[c.item_id]={status:c.status,authenticationStatus:c.auth_status,tag:c.tag}; return out; }
+  if(path==="live"){ const out={}, ids=(body&&body.ids)||[]; for(const list of Object.values(DEMO_DB)) for(const c of list) if(ids.includes(c.item_id)&&!out[c.item_id]) out[c.item_id]={status:c.status,authenticationStatus:c.auth_status,tag:c.tag}; return out; }
   return {};
 }
 function goDemo(why){
@@ -1060,7 +1060,7 @@ async function statusRun(dry){
   const cb=$("#confirmBtn"); cb.disabled=true; $("#barmsg").innerHTML=`<span class="spin"></span>${dry?"Dry run":"Writing to admin"}… ${hit.length} cards`;
   let res;
   try{ res=await api("status",{kind:S.kind,view:S.kind==="arena"?"arena":S.view,text:S.text,key:a.key,op:a.op,note,notes,item_ids:hit.map(r=>r.item_id),dry_run:dry}); }
-  catch(e){ cb.disabled=false; $("#barmsg").innerHTML=`<span style="color:var(--warn)">${esc(e.message)}</span>`; return; }
+  catch(e){ cb.disabled=false; $("#barmsg").innerHTML=`<span style="color:var(--warn)">${esc(e.message)}</span>`; if(/Refresh from admin/.test(e.message)&&(ARCHK(S.kind)||S.kind==="arena")) refreshArchived().then(()=>{ $("#barmsg").innerHTML=`<span style="color:var(--warn)">${esc(e.message.replace(/ Click ↻ Refresh from admin to see their current status\./,""))} The cards now show their current status from admin.</span>`; }); return; }
   const field=v.field==="auth"?"auth_status":"status";
   if(!res.dry_run){ const to=new Map((res.changes||[]).map(c=>[c.item_id,c.to])); for(const r of S.matched) if((res.written_ids||[]).includes(r.item_id)){ r[field]=to.get(r.item_id); if(a.op==="apply"&&v.note&&notes[r.item_id]) r.notes=[{side:null,issue:v.label,note:notes[r.item_id],logged_at:new Date().toISOString(),note_type:"Note"},...(r.notes||[])]; } }
   const n=res.dry_run?(res.changes||[]).length:(res.written_ids||[]).length;
@@ -1253,7 +1253,7 @@ function recheck(c){
 // Arena Club: grades straight from admin (Metabase reads a copy that updates on a delay)
 // Archived: status, auth status, tag and photo straight from admin (Metabase reads a copy that updates on a delay)
 async function refreshArchived(){
-  if(!S||!ARCHK(S.kind)) return;
+  if(!S||!(ARCHK(S.kind)||S.kind==="arena")) return;
   const mine=S, ids=S.matched.map(r=>r.item_id).filter(id=>/^[0-9a-f-]{36}$/i.test(id));
   let live={}, err="";
   try{ live=await api("live",{ids}); }catch(e){ err=e.message; }

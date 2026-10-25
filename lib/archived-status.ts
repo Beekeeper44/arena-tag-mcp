@@ -123,6 +123,15 @@ export async function runArchivedStatus(input: {
   // Archived → Cards / Watches use the Cards / Watches searches, so read each card's current status straight from admin
   const live = input.view === "arch_cards" || input.view === "arch_watches" || input.view === "arena";
   const fresh = live ? await liveList(String(input.view), wanted, input.as_admin_user_id) : await searchArchived(input.view, input.text);
+  // Decide from admin, not Metabase: Metabase updates on a delay, so a card changed in admin a minute ago can still
+  // look old there. Read each card's current status / authentication straight from admin before deciding what to write.
+  if (!live) {
+    const now = await liveList(String(input.view), wanted, input.as_admin_user_id).catch(() => null);
+    if (now) {
+      const cur = new Map(now.rows.map((r) => [r.item_id, r]));
+      for (const r of fresh.rows) { const c = cur.get(r.item_id); if (c) { r.status = c.status ?? r.status; r.auth_status = c.auth_status; } }
+    }
+  }
   const byId = new Map(fresh.rows.map((r) => [r.item_id, r]));
   const cards = wanted.map((id) => byId.get(id)).filter((c): c is ArchivedCard => !!c && !c.item_id.startsWith("noid:"));
   if (!cards.length) throw new Error("None of the selected cards still match. Search again.");
@@ -146,7 +155,7 @@ export async function runArchivedStatus(input: {
   const noTarget = changes.filter((x) => x.to === null).map((x) => x.c.ac || x.c.item_id);
   const todo = changes.filter((x): x is { c: ArchivedCard; from: string | null; to: string } => x.to !== null);
   const skipped = cards.length - changes.length;
-  if (!todo.length) throw new Error(noTarget.length ? `Nothing to go back to for ${noTarget.join(", ")}: set remove_status_to in ARCHIVE_STATUS_WRITE.` : op === "apply" ? `All selected cards are already ${act.value}.` : `None of the selected cards are ${act.value}.`);
+  if (!todo.length) throw new Error(noTarget.length ? `Nothing to go back to for ${noTarget.join(", ")}: set remove_status_to in ARCHIVE_STATUS_WRITE.` : op === "apply" ? `All selected cards are already ${act.value} in admin. Click ↻ Refresh from admin to see their current status.` : `None of the selected cards are ${act.value} in admin. Click ↻ Refresh from admin to see their current status.`);
 
   const dry = config.dryRun() || input.dry_run === true;
   const id = newId();
