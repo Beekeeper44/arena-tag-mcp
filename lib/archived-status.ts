@@ -28,10 +28,14 @@ export type StatusKey = keyof typeof STATUS_ACTIONS;
 type Call = { method?: string; path: string; body?: unknown };
 type WriteCfg = { auth?: Call; status?: Call; note?: Call; remove_status_to?: string; remove_auth_to?: string };
 
-function writeCfg(): WriteCfg | null {
+// Built in: Not accepted on / off is the same save the admin card page makes from its
+// "Change Card Authentication Status" dropdown: PATCH /cards/{id} { authenticationStatus } (None = "none").
+const DEFAULT_AUTH: Call = { method: "PATCH", path: "/cards/{id}", body: { authenticationStatus: "{value}" } };
+function writeCfg(): WriteCfg {
   const raw = process.env.ARCHIVE_STATUS_WRITE;
-  if (!raw) return null;
-  try { return JSON.parse(raw) as WriteCfg; } catch { throw new Error("ARCHIVE_STATUS_WRITE in Vercel isn't valid JSON."); }
+  let cfg: WriteCfg = {};
+  if (raw) { try { cfg = JSON.parse(raw) as WriteCfg; } catch { throw new Error("ARCHIVE_STATUS_WRITE in Vercel isn't valid JSON."); } }
+  return { ...cfg, auth: cfg.auth ?? DEFAULT_AUTH };
 }
 const fill = (v: unknown, vars: Record<string, string>): unknown =>
   typeof v === "string" ? v.replace(/\{(\w+)\}/g, (_, k) => vars[k] ?? "") :
@@ -42,10 +46,11 @@ async function call(session: AdminSession, c: Call, vars: Record<string, string>
   const path = String(fill(c.path, vars));
   const res = await fetch(`${config.adminApiUrl()}${path}`, {
     method: c.method || "PATCH",
-    headers: { "Content-Type": "application/json", Accept: "application/json", Cookie: `sAccessToken=${session.accessToken}`, rid: "anti-csrf", "st-auth-mode": "cookie", Origin: config.adminOrigin() },
+    headers: { "Content-Type": "application/json", Accept: "application/json", Cookie: `sAccessToken=${session.accessToken}`, rid: "anti-csrf", "st-auth-mode": "cookie", Origin: config.adminOrigin(), Referer: `${config.adminOrigin()}/` },
     body: c.body === undefined ? undefined : JSON.stringify(fill(c.body, vars)),
   });
   if (!res.ok) throw new Error(`${c.method || "PATCH"} ${path} ${res.status}: ${(await res.text()).slice(0, 200)}`);
+  return (await res.json().catch(() => null)) as Record<string, unknown> | null;
 }
 
 // Issue types for the archive note, checked in this order: the first match wins.
@@ -125,13 +130,14 @@ export async function runArchivedStatus(input: {
   // Apply: skip cards already there. Remove: only cards that have it now; they go back to what they had before.
   const cfg = writeCfg();
   const prev = op === "remove" ? await before(cards.map((c) => c.item_id), key) : new Map<string, string | null>();
-  const fallback = act.field === "auth" ? cfg?.remove_auth_to ?? "none" : cfg?.remove_status_to ?? null;
+  const fallback = act.field === "auth" ? cfg.remove_auth_to ?? "none" : cfg.remove_status_to ?? null;
   type Change = { c: ArchivedCard; from: string | null; to: string | null };
   const changes: Change[] = cards.flatMap((c): Change[] => {
     const now = cur(c, act.field);
     if (op === "apply") return now === act.value ? [] : [{ c, from: now, to: act.value }];
     if (now !== act.value) return [];
-    return [{ c, from: now, to: prev.get(c.item_id) ?? fallback }];
+    // Not accepted → Remove always goes back to "none" (admin's Authentication Status dropdown); card status goes back to what it was
+    return [{ c, from: now, to: act.field === "auth" ? (cfg.remove_auth_to ?? "none") : prev.get(c.item_id) ?? fallback }];
   });
   if (op === "apply" && act.note) {
     const blank = changes.filter((x) => !noteFor(x.c)).map((x) => x.c.ac || x.c.item_id);
@@ -161,7 +167,7 @@ export async function runArchivedStatus(input: {
     return { ...base, status: "dry_run_completed", dry_run: true, written_ids: [] as string[], failed: 0, failures: [] as { item_id: string; error: string }[] };
   }
   const writeCall = cfg?.[act.field];
-  if (!cfg || !writeCall || (op === "apply" && act.note && !cfg.note)) {
+  if (!writeCall || (op === "apply" && act.note && !cfg.note)) {
     await q(`UPDATE tag_runs SET status='blocked', finished_at=now() WHERE id=$1`, [id]);
     throw new Error(`Status changes aren't connected to admin yet. Once admin has the endpoints, set ARCHIVE_STATUS_WRITE in Vercel (needs "${act.field}"${act.note ? ' and "note"' : ""}). Dry run works now.`);
   }
@@ -172,7 +178,13 @@ export async function runArchivedStatus(input: {
       await Promise.all(todo.slice(i, i + 4).map(async (x) => {
         const vars = { id: x.c.item_id, value: x.to, note: noteFor(x.c), user: input.user, ac: x.c.ac, order: x.c.order_number };
         try {
-          await call(session, writeCall, vars);
+          const back = await call(session, writeCall, vars);
+          // Not accepted on / off: make sure admin saved it (the card comes back from the PATCH)
+          if (act.field === "auth" && writeCall === cfg.auth) {
+            const card = (back && typeof back === "object" && "card" in back ? (back as { card: Record<string, unknown> }).card : back) as Record<string, unknown> | null;
+            const got = card?.authenticationStatus;
+            if (got !== undefined && String(got) !== x.to) throw new Error(`admin kept authenticationStatus "${String(got)}" (wanted "${x.to}")`);
+          }
           if (op === "apply" && act.note && cfg.note) await call(session, cfg.note, vars);
           written.push(x.c.item_id);
           await q(`UPDATE tag_run_items SET status='written', updated_at=now() WHERE run_id=$1 AND item_id=$2`, [id, x.c.item_id]);
@@ -194,7 +206,7 @@ export async function undoArchivedStatus(input: { run_id: string; user: string; 
   const run = runs[0];
   if (!run || run.kind !== "status") throw new Error("That isn't a status run.");
   const field = run.filters?.field === "auth" ? "auth" : "status";
-  const cfg = writeCfg(), writeCall = cfg?.[field];
+  const cfg = writeCfg(), writeCall = cfg[field];
   if (!writeCall) throw new Error("Status changes aren't connected to admin yet (ARCHIVE_STATUS_WRITE).");
   const items = await q<{ item_id: string; previous_tag: string | null }>(`SELECT item_id, previous_tag FROM tag_run_items WHERE run_id=$1 AND status='written'`, [run.id]);
   const back = items.filter((x) => x.previous_tag);

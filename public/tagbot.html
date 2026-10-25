@@ -950,7 +950,7 @@ async function demoApi(path,body){
     for(const c of list) if((body.item_ids||[]).includes(c.item_id)){
       const now=c[a[0]];
       if(body.op==="apply"&&now!==a[1]){ changes.push({item_id:c.item_id,from:now,to:a[1]}); }
-      if(body.op==="remove"&&now===a[1]){ const back=(c._was||{})[k]??(a[0]==="auth_status"?"none":"pending_review"); changes.push({item_id:c.item_id,from:now,to:back}); }
+      if(body.op==="remove"&&now===a[1]){ const back=a[0]==="auth_status"?"none":((c._was||{})[k]??"pending_review"); changes.push({item_id:c.item_id,from:now,to:back}); }
     }
     if(!body.dry_run) for(const ch of changes){ const c=list.find(x=>x.item_id===ch.item_id); if(body.op==="apply"){ c._was=c._was||{}; c._was[k]=ch.from; if(k==="pending_rescan"||k==="archive") c.notes=[{side:null,issue:k==="archive"?"Archive":"Pending rescan",note:(body.notes||{})[c.item_id]||body.note,logged_at:new Date().toISOString(),note_type:"Note"},...c.notes]; } c[a[0]]=ch.to; }
     const run="demo_s"+(++DEMO_RUN); DEMO_STATUS_RUNS[run]={view:body.view,field:a[0],changes};
@@ -1054,7 +1054,7 @@ async function statusRun(dry){
   const note=(S.snote||"").trim();
   const notes=a.op==="apply"&&v.note?Object.fromEntries(hit.map(r=>[r.item_id,cardNote(r,a.key,note)])):{};
   const ok=await ask({title:`${a.op==="apply"?"Set":"Remove"} ${v.value} on ${hit.length} card${hit.length===1?"":"s"}?`,
-    body:`${dry?"<b>Dry run:</b> records what would change without writing to admin.<br><br>":""}${a.op==="apply"?`${v.field==="auth"?"Authentication status":"Card status"} becomes <b>${esc(v.value)}</b>.`:`Cards go back to the ${v.field==="auth"?"authentication status":"status"} they had before.`}${a.op==="apply"&&v.note?(a.key==="archive"?`<br>Each card gets its own note, e.g. <i>${esc(notes[hit[0]?.item_id]||"")}</i>`:`<br>Note: <i>${esc(note)}</i>`):""}${skip?`<br><span class="dim">${skip} selected card${skip===1?" is":"s are"} skipped (${a.op==="apply"?"already":"not"} ${esc(v.value)}).</span>`:""}<br>You can undo this afterward.`,
+    body:`${dry?"<b>Dry run:</b> records what would change without writing to admin.<br><br>":""}${a.op==="apply"?`${v.field==="auth"?"Authentication status":"Card status"} becomes <b>${esc(v.value)}</b>.`:`Cards go back to the ${v.field==="auth"?"authentication status <b>none</b>":"status they had before"}.`}${a.op==="apply"&&v.note?(a.key==="archive"?`<br>Each card gets its own note, e.g. <i>${esc(notes[hit[0]?.item_id]||"")}</i>`:`<br>Note: <i>${esc(note)}</i>`):""}${skip?`<br><span class="dim">${skip} selected card${skip===1?" is":"s are"} skipped (${a.op==="apply"?"already":"not"} ${esc(v.value)}).</span>`:""}<br>You can undo this afterward.`,
     yes:dry?"Run dry run":a.op==="apply"?`Yes, set ${v.value}`:"Yes, remove it", danger:a.op==="remove"&&!dry});
   if(!ok) return;
   const cb=$("#confirmBtn"); cb.disabled=true; $("#barmsg").innerHTML=`<span class="spin"></span>${dry?"Dry run":"Writing to admin"}… ${hit.length} cards`;
