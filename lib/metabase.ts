@@ -61,7 +61,7 @@ export type CardRow = {
 };
 
 type TemplateTag = { name: string; type: string; id?: string; ptype?: string };
-let tagCache: { at: number; tags: Record<string, TemplateTag> } | null = null;
+const tagCache = new Map<number, { at: number; tags: Record<string, TemplateTag> }>();
 
 async function mb(path: string, init: RequestInit = {}) {
   const res = await fetch(`${config.metabaseHost()}${path}`, {
@@ -74,8 +74,10 @@ async function mb(path: string, init: RequestInit = {}) {
 // Which {{filters}} does the saved question have? Metabase reports them in different places depending on
 // version, so read all of them: native template-tags, per-stage template-tags, and the card's parameters.
 async function getTemplateTags(): Promise<Record<string, TemplateTag>> {
-  if (tagCache && Date.now() - tagCache.at < 60 * 1000) return tagCache.tags;
-  const res = await mb(`/api/card/${config.metabaseCardId()}`);
+  const cardId = config.metabaseCardId();
+  const hit = tagCache.get(cardId);
+  if (hit && Date.now() - hit.at < 60 * 1000) return hit.tags;
+  const res = await mb(`/api/card/${cardId}`);
   if (!res.ok) throw new Error(`Metabase card fetch failed: ${res.status} ${await res.text()}`);
   const card = await res.json();
   const tags: Record<string, TemplateTag> = {};
@@ -101,7 +103,7 @@ async function getTemplateTags(): Promise<Record<string, TemplateTag>> {
       ptype: p?.type,
     };
   }
-  tagCache = { at: Date.now(), tags };
+  tagCache.set(cardId, { at: Date.now(), tags });
   return tags;
 }
 

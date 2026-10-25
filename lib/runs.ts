@@ -6,6 +6,7 @@ import { queryCards, queryCardsDetailed, summarize, type CardFilters, type CardR
 import { openAdminSession, patchTag, regenerateImages, approveReview, changeGradesLikeReview, type WriteResult, type WriteKind } from "./admin";
 import { searchWatches, watchLabel, type WatchRow } from "./watches";
 import { searchArena, type ArenaCard } from "./arena";
+import { searchArchived, type ArchivedCard } from "./archived";
 import { q } from "./db";
 
 type Run = {
@@ -454,6 +455,39 @@ export async function runArenaSelection(input: {
     `INSERT INTO tag_runs (id, status, action, tag, mode, filters, post_filters, requested_by, preview_count, staged_by, staged_at, staged_count, expires_at, kind)
      VALUES ($1,'staged',$2,$3,$4,$5,'{}',$6,$7,$6,now(),$7,$8,'card')`,
     [id, action, tag, input.mode ?? "overwrite", JSON.stringify({ text: input.text, source: "arena_club", ...fresh.parsed.filters }), input.user, chosen.length, hoursFromNow(1)]
+  );
+  await q(
+    `INSERT INTO tag_run_items (run_id, item_id, previous_tag, new_tag, label, ev)
+     SELECT $1, t.item_id, t.prev, $2, t.label, t.ev FROM unnest($3::text[], $4::text[], $5::text[], $6::numeric[]) AS t(item_id, prev, label, ev)`,
+    [id, tag, chosen.map((r) => r.item_id), chosen.map((r) => r.tag), chosen.map(label), chosen.map((r) => r.ev)]
+  );
+  const result = await goLive({ run_id: id, confirm: true, approved_by: input.user, dry_run: input.dry_run, as_admin_user_id: input.as_admin_user_id });
+  return { ...result, skipped_no_longer_matching: wanted.length - chosen.length, previous: Object.fromEntries(chosen.map((r) => [r.item_id, r.tag])) };
+}
+
+// ---------- Archived tile: tag cards picked from one of the four archived questions ----------
+export async function runArchivedSelection(input: {
+  view: unknown; text: string; action: "set" | "clear"; tag?: string | null; mode?: "overwrite" | "skip_tagged";
+  item_ids: string[]; dry_run?: boolean; user: string; as_admin_user_id?: string;
+}) {
+  const action = input.action;
+  const tag = action === "clear" ? null : (input.tag ?? "").trim();
+  if (action === "set") { const err = validateTag(tag as string); if (err) throw new Error(err); }
+  const wanted = [...new Set(input.item_ids)];
+  if (!wanted.length) throw new Error("No cards selected.");
+  if (wanted.length > config.maxItemsPerRun()) throw new Error(`${wanted.length} cards is over the ${config.maxItemsPerRun()}-item limit.`);
+  const fresh = await searchArchived(input.view, input.text);
+  const rows = applyMode(fresh.rows, action, tag, input.mode ?? "overwrite");
+  const byId = new Map(rows.map((r) => [r.item_id, r]));
+  const chosen = wanted.map((id) => byId.get(id)).filter((r): r is ArchivedCard => !!r);
+  if (!chosen.length) throw new Error("None of the selected cards still match. Search again.");
+  if (chosen.some((r) => r.item_id.startsWith("noid:"))) throw new Error("Some of these cards have no ITEM_ID in the archived question, so they can't be tagged.");
+  const id = newId();
+  const label = (r: ArchivedCard) => [fresh.view_label, r.order_number && `order ${r.order_number}`, r.player_name, r.notes[0]?.issue].filter(Boolean).join(" · ");
+  await q(
+    `INSERT INTO tag_runs (id, status, action, tag, mode, filters, post_filters, requested_by, preview_count, staged_by, staged_at, staged_count, expires_at, kind)
+     VALUES ($1,'staged',$2,$3,$4,$5,'{}',$6,$7,$6,now(),$7,$8,'card')`,
+    [id, action, tag, input.mode ?? "overwrite", JSON.stringify({ text: input.text, source: `archived_${fresh.view}`, card_id: fresh.card_id }), input.user, chosen.length, hoursFromNow(1)]
   );
   await q(
     `INSERT INTO tag_run_items (run_id, item_id, previous_tag, new_tag, label, ev)

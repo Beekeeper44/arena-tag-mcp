@@ -1,7 +1,9 @@
 // JSON API for the Tag Bot screen. Everything except login needs the signed-in cookie.
 import { config } from "@/lib/config";
+import { searchArchived } from "@/lib/archived";
+import { runArchivedStatus, undoArchivedStatus } from "@/lib/archived-status";
 import { type CardFilters, type PostFilters } from "@/lib/metabase";
-import { runSelection, runWatchSelection, runArenaSelection, runOverallUpdate, runGradeUpdate, undoRun, listRuns } from "@/lib/runs";
+import { runSelection, runWatchSelection, runArenaSelection, runArchivedSelection, runOverallUpdate, runGradeUpdate, undoRun, listRuns } from "@/lib/runs";
 import { searchArena } from "@/lib/arena";
 import { openAdminSession, liveCards } from "@/lib/admin";
 import { listPrompts, addPrompt, renamePrompt, deletePrompt } from "@/lib/ui";
@@ -96,6 +98,9 @@ export async function POST(req: Request, ctx: Ctx) {
   try {
     switch (action) {
       case "find": {
+        // Archived → Cards / Watches pills: same prompts and Metabase as the Cards / Watches tiles
+        if (body.kind === "archived" && body.view === "arch_cards") body.kind = "cards";
+        if (body.kind === "archived" && body.view === "arch_watches") body.kind = "watches";
         if (body.kind === "arena") {
           const a = await searchArena(String(body.text ?? ""));
           return json({ parsed: a.parsed, has_filter: a.has_filter, queries: [], ms: a.ms, total: a.rows.length, missing: a.missing, cards: a.rows, orders: a.orders,
@@ -108,6 +113,12 @@ export async function POST(req: Request, ctx: Ctx) {
           return json({ parsed: w.parsed, has_filter: w.has_filter, queries: [], ms: w.ms, total: w.rows.length, missing: w.missing, inventory: w.inventory, cards: w.rows.map(watchToTile), notice: w.notice, searched: w.searched });
         }
         // Every prompt queries question 4131 fresh, using its own filters (only matching cards come back).
+        if ((body.kind === "archived" || body.kind === "pl")) {
+          const a = await searchArchived(body.view, String(body.text ?? ""));
+          return json({ parsed: a.parsed, has_filter: a.has_filter, queries: [], ms: a.ms, total: a.rows.length, missing: a.missing.map((o) => ({ key: "order", value: o })),
+            card_id: a.card_id, view: a.view, view_label: a.view_label, words: a.words,
+            cards: a.rows.map(({ search, ...c }) => c) });
+        }
         const r = await smartSearch(String(body.text ?? ""));
         return json({
           parsed: r.parsed,
@@ -129,6 +140,8 @@ export async function POST(req: Request, ctx: Ctx) {
         });
       }
       case "apply":
+        if (body.kind === "archived" && body.view === "arch_cards") body.kind = "cards";
+        if (body.kind === "archived" && body.view === "arch_watches") body.kind = "watches";
         if (body.kind === "arena")
           return json(await runArenaSelection({
             text: str("text"), action: body.action === "clear" ? "clear" : "set", tag: (body.tag as string) ?? null,
@@ -148,8 +161,13 @@ export async function POST(req: Request, ctx: Ctx) {
               as_admin_user_id: adminLoginFor(u),
             })
           );
-        return json(
-          await runSelection({
+        if ((body.kind === "archived" || body.kind === "pl"))
+          return json(await runArchivedSelection({
+            view: body.view, text: str("text"), action: body.action === "clear" ? "clear" : "set", tag: (body.tag as string) ?? null,
+            mode: body.mode === "skip_tagged" ? "skip_tagged" : "overwrite", item_ids: Array.isArray(body.item_ids) ? (body.item_ids as string[]) : [],
+            dry_run: body.dry_run === true, user: u.name, as_admin_user_id: adminLoginFor(u),
+          }));
+        return json(await runSelection({
             filters: (body.filters ?? {}) as CardFilters,
             post_filters: (body.post_filters ?? {}) as PostFilters,
             action: body.action === "clear" ? "clear" : "set",
@@ -160,8 +178,7 @@ export async function POST(req: Request, ctx: Ctx) {
             dry_run: body.dry_run === true,
             user: u.name,
             as_admin_user_id: adminLoginFor(u),
-          })
-        );
+          }));
       case "overall":
         return json(await runOverallUpdate({
           text: str("text"), items: Array.isArray(body.items) ? (body.items as { item_id: string; overall: number }[]) : [],
@@ -178,6 +195,14 @@ export async function POST(req: Request, ctx: Ctx) {
         const session = await openAdminSession(adminLoginFor(u));
         try { return json(await liveCards(session, ids)); } finally { await session.revoke(); }
       }
+      case "status":
+        // Archived tile: Not accepted / Pending rescan / Archive — apply or remove (logged, undoable)
+        return json(await runArchivedStatus({
+          view: body.view, text: str("text"), key: str("key"), op: str("op"), note: String(body.note ?? ""), notes: (body.notes && typeof body.notes === "object" ? body.notes : undefined) as Record<string, string> | undefined,
+          item_ids: Array.isArray(body.item_ids) ? (body.item_ids as string[]) : [], dry_run: body.dry_run === true, user: u.name, as_admin_user_id: adminLoginFor(u),
+        }));
+      case "status-undo":
+        return json(await undoArchivedStatus({ run_id: str("run_id"), user: u.name, as_admin_user_id: adminLoginFor(u) }));
       case "undo":
         return json(await undoRun({ run_id: str("run_id"), confirm: true, requested_by: u.name, as_admin_user_id: adminLoginFor(u) }));
       case "prompts":

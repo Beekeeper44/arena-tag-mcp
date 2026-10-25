@@ -5,7 +5,7 @@ import { config } from "./config";
 import { inBatches } from "./metabase";
 import { parseRequest, buildLexiconFromRows, markPlainTag } from "./parse";
 
-type Param = { name: string; id: string; type: string; dimension: boolean };
+export type Param = { name: string; id: string; type: string; dimension: boolean };
 const paramCache = new Map<number, { at: number; params: Param[] }>();
 /** Optional: the "Overall Check" question (subgrades vs overall, VALIDATION = PASS / FAIL), searched by the same order numbers. */
 const checkCardId = () => Number(process.env.ARENA_CHECK_CARD_ID || 15214) || null; // "Overall Check" (Order Number filter)
@@ -16,7 +16,7 @@ async function mb(path: string, init: RequestInit = {}) {
   return fetch(`${config.metabaseHost()}${path}`, { ...init, headers: { "x-api-key": config.metabaseApiKey(), ...(init.headers || {}) } });
 }
 
-async function params(id: number = cardId()): Promise<Param[]> {
+export async function params(id: number = cardId()): Promise<Param[]> {
   const hit = paramCache.get(id);
   if (hit && Date.now() - hit.at < 60_000) return hit.params;
   const res = await mb(`/api/card/${id}`);
@@ -41,8 +41,11 @@ async function params(id: number = cardId()): Promise<Param[]> {
   return list;
 }
 
-async function run(param: Param, value: string, id: number = cardId()) {
-  const parameters = [{ id: param.id, type: param.type, target: [param.dimension ? "dimension" : "variable", ["template-tag", param.name]], value: [param.type.startsWith("number") ? Number(value) : value] }];
+export async function run(param: Param, value: string, id: number = cardId()) {
+  return runCard(id, [{ id: param.id, type: param.type, target: [param.dimension ? "dimension" : "variable", ["template-tag", param.name]], value: [param.type.startsWith("number") ? Number(value) : value] }]);
+}
+/** Run a question with any parameters (none = every row). */
+export async function runCard(id: number, parameters: unknown[] = []) {
   const path = `/api/card/${id}/query/json`;
   let res = await mb(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ parameters, format_rows: false }) });
   if (!res.ok && res.status >= 400 && res.status < 500) {
