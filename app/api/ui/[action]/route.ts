@@ -35,7 +35,7 @@ export async function GET(req: Request, ctx: Ctx) {
       case "me":
         return json({
           id: u.id, user: u.name, email: u.email, role: u.role, is_admin: can(u, "admin"), can_write: true,
-          linked: !!u.admin_user_id, dry_run: config.dryRun(), max_items_per_run: config.maxItemsPerRun(),
+          linked: !!u.admin_user_id, dry_run: config.dryRun(), max_items_per_run: config.maxItemsPerRun(), max_archive_per_run: config.maxArchivePerRun(),
         });
       case "users":
         return forbid(u, "admin") ?? json(await listUsers());
@@ -200,6 +200,7 @@ export async function POST(req: Request, ctx: Ctx) {
         return json(await runArchivedStatus({
           view: body.view, text: str("text"), key: str("key"), op: str("op"), note: String(body.note ?? ""), notes: (body.notes && typeof body.notes === "object" ? body.notes : undefined) as Record<string, string> | undefined,
           item_ids: Array.isArray(body.item_ids) ? (body.item_ids as string[]) : [], dry_run: body.dry_run === true, user: u.name, as_admin_user_id: adminLoginFor(u),
+          confirm_emailed: body.confirm_emailed === true, confirm_unboxed: body.confirm_unboxed === true,
         }));
       case "status-undo":
         return json(await undoArchivedStatus({ run_id: str("run_id"), user: u.name, as_admin_user_id: adminLoginFor(u) }));

@@ -117,7 +117,7 @@ const mcp = createMcpHandler(
       {},
       safe(async () => ({
         dry_run: config.dryRun(),
-        max_items_per_run: config.maxItemsPerRun(),
+        max_items_per_run: config.maxItemsPerRun(), max_archive_per_run: config.maxArchivePerRun(),
         write_concurrency: config.writeConcurrency(),
         run_expiry_hours: config.runExpiryHours(),
         tag_allowlist: config.tagAllowlist(),

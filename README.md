@@ -92,7 +92,7 @@ Type tag names to find what has them, on Cards or Watches: `sd_rookie_grail`, or
 - Every search value runs as its own Metabase query (8 at a time); there is no cap on how many.
 - Every match is returned to the screen (it shows 240 at a time with "show more"; all matches stay selected).
 - Words that aren't a player, set or parallel are also tried as a **tag** on Cards (and as Tag / Brand / Model on Watches), so plain tags like `vookum` work.
-- The only cap left is on writes: `MAX_ITEMS_PER_RUN`. Raise it in Vercel for bigger runs.
+- Caps on writes: `MAX_ITEMS_PER_RUN` (default 1000) for tagging and Not accepted / Pending rescan; `MAX_ARCHIVE_PER_RUN` (default 200) for Archive. Change them in Vercel. Keep tag runs under ~1,000 so they finish inside Vercel's 5-minute limit.
 - A watch search with nothing to send through a filter (e.g. only "blue dial over $40k") pulls 45046 whole, which its SQL caps at 5,000; the screen says so. Removing `LIMIT 5000` from 45046 fixes that case too.
 
 ## Arena Club tile (orders)
@@ -118,3 +118,33 @@ The approval body is exactly the field list the review page sends (captured from
 ### Live grades (Arena Club)
 
 Metabase reads a copy of admin's data that updates on a delay, so right after a card is regraded or made Authentic in admin, 45739 can still show the old grade. After every Arena Club search TAG-BOT also asks admin directly (`GET /cards/{id}`, as the signed-in person's admin login) for each card's overall, subgrades, slab picture and tag, and updates the tiles. Overall 0 = Authentic (all grades as admin has them, "AUTHENTIC" instead of PASS/FAIL); a 0 subgrade on a graded card means "not overridden" in admin, so the measured value stays. The line under the search box says how many cards were updated this way.
+
+## Archive (Archived At)
+
+The **Archive** action on the Archived, Precision Labeling and Arena Club tiles makes the same calls as admin's **Archived At → Set / Unset** button (captured from a real Set). It's built in, so `ARCHIVE_STATUS_WRITE` isn't needed for it.
+
+| Step | Call |
+|---|---|
+| Read card | `GET /cards/{id}`: previous `archivedAt`, `isInMarketplace`, `status` are saved on the run for undo |
+| Set: log | `POST /v2/operation-logs { cardId, kind: "archive", note, startedAt, finishedAt, version: 1 }`. The note is picked with pills: `<499`/`500+`, `FS`/`BS`, issue type, e.g. `<499 FS Sticker` |
+| Set: card | `PATCH /cards/{id} { archivedAt: <now>, isInMarketplace: false }`; admin then shows status `archived` |
+| Unset | `PATCH /cards/{id} { archivedAt: null }` |
+| Undo | puts back `archivedAt`, `isInMarketplace` and, if it changed, `status` |
+
+Every PATCH is checked against the card admin sends back. If the log isn't saved, the card isn't touched. `ARCHIVE_LOG_PATH` overrides `/v2/operation-logs`.
+
+- **Bulk:** select one card or many (up to the run limit). Each card gets its own row of note pills, pre-filled from its archive log; with several selected, **Set all** pills fill every card at once and any single card can be changed after. Cards already archived in admin are shown and skipped. Each card gets its own log entry and Archived At write; undo covers the whole batch.
+- Before Set, TAG-BOT asks the two questions admin asks in pop-ups as checkboxes: *I've emailed the customer* once for the batch, and *removed from box N* for each card admin still has in a box (`boxId`). Both are logged on the run. Archiving doesn't clear `boxId` in admin, the same as admin's own Set.
+
+## Pending rescan (Rescan Requested At)
+
+**Pending rescan** works like Archive and makes the same calls as admin's **Rescan Requested At → Set / Unset** (captured from a real Set). It's built in, so `ARCHIVE_STATUS_WRITE` isn't needed for it.
+
+| Step | Call |
+|---|---|
+| Read card | `GET /cards/{id}`: previous `rescanRequestedAt` and `status` saved for undo |
+| Set: log | `POST /v2/operation-logs { cardId, kind: "note", note: "Manually set rescanRequestedAt  <note>", startedAt, finishedAt, version: 1 }` |
+| Set: card | `PATCH /cards/{id} { rescanRequestedAt: <now> }` |
+| Unset | `PATCH /cards/{id} { rescanRequestedAt: null }` |
+
+One card or a batch (up to `MAX_ARCHIVE_PER_RUN`), with the same note pills and **Set all** as Archive. No customer-email or box confirmation.

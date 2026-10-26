@@ -304,6 +304,23 @@ h1 span{color:var(--go)}
 .sabtn.on{background:var(--go);border-color:var(--go);color:var(--go-ink)}
 .sabtn.rm.on{background:#d92d20;border-color:#d92d20;color:#fff}
 .sabtn[disabled]{opacity:.5;cursor:default}
+.npills{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:6px 0}
+.npills>span{min-width:42px}
+.npill{all:unset;box-sizing:border-box;cursor:pointer;font-size:13px;font-weight:700;padding:5px 11px;border-radius:999px;border:1px solid var(--line);color:var(--dim)}
+.npill:hover{border-color:var(--go);color:var(--text)}
+.npill:focus-visible{outline:2px solid var(--go);outline-offset:2px}
+.npill.on{background:var(--go);border-color:var(--go);color:var(--go-ink)}
+.npill[disabled]{opacity:.5;cursor:default}
+.nall{margin:8px 0;padding:8px 10px;border:1px solid var(--go);border-radius:8px}
+.nrows{display:grid;gap:6px;margin:8px 0;max-height:420px;overflow:auto}
+.nrow{padding:6px 10px;border:1px dashed var(--line);border-radius:8px}
+.nrow.done{opacity:.6}
+.nrow .npills{display:inline-flex;margin:4px 14px 2px 0}
+.nrowh{font-size:13px}
+.archchk{margin-top:12px;display:grid;gap:8px;padding:10px 12px;border:1px solid var(--line);border-radius:8px}
+.archchk label{display:flex;gap:8px;align-items:flex-start;cursor:pointer;line-height:1.35}
+.archchk input{margin-top:1px;flex:none;width:19px;height:19px;accent-color:var(--go);cursor:pointer}
+.archchk label{font-size:15px}
 .saprev{display:grid;gap:3px;font-size:13px;padding:8px 10px;border:1px dashed var(--line);border-radius:8px}
 .sanote{margin:8px 0 0;display:grid;gap:4px;max-width:640px}
 .sanote textarea{font:inherit;font-size:13px;padding:8px 10px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--text);resize:vertical}
@@ -438,10 +455,11 @@ body.readonly #confirmBtn,body.readonly #dryWrap,body.readonly #undoBtn{display:
 .history th{color:var(--dim);font-weight:500}
 .tblwrap{overflow-x:auto}
 
-dialog{border:1px solid var(--line);border-radius:12px;background:var(--panel);color:var(--text);padding:20px;max-width:420px;width:calc(100% - 32px)}
+dialog{border:1px solid var(--line);border-radius:12px;background:var(--panel);color:var(--text);padding:24px 26px;max-width:580px;width:calc(100% - 32px)}
+#dlgBody{font-size:14.5px;line-height:1.55}
 dialog::backdrop{background:#000a}
 dialog.info::backdrop{background:#000c}
-dialog h2{margin:0 0 8px;font-size:17px}
+dialog h2{margin:0 0 10px;font-size:20px}
 dialog .acts{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}
 @media (prefers-reduced-motion: reduce){*{transition:none!important}}
 
@@ -865,7 +883,7 @@ const DEMO_DB=(()=>{
   }
   // Arena Club pre-graded: the two real rows from question 45772 (Archive PL Dashboard)
   db.ac_pregraded=[
-    {kind:"archived",view:"ac_pregraded",item_id:"45c4accd-f84d-4f43-9b0e-48a460cb2d56",ac:"4268252",cert:"",order_number:"21503509",order_user_id:"00838bfd-7979-41bd-81f5-c6777c32d6c4",
+    {kind:"archived",view:"ac_pregraded",item_id:"45c4accd-f84d-4f43-9b0e-48a460cb2d56",in_box:"1731",ac:"4268252",cert:"",order_number:"21503509",order_user_id:"00838bfd-7979-41bd-81f5-c6777c32d6c4",
      player_name:"AC 4268252",set_name:"",insert:null,set_number:null,parallel_name:null,grade:"",grading_company:"",ev:0,tag:null,img:null,
      card_url:"https://admin.arenaclub.com/cards/45c4accd-f84d-4f43-9b0e-48a460cb2d56",status:"pending_rejection",auth_status:"not_accepted",order_owner:"Arena Club",grade_type:"Pre-graded",value_range:"<499",
      notes:[{side:"BS",issue:"Sticker",note:"$99 BS Penmark",logged_at:"2026-10-23 18:02:00",note_type:"Archive"}]},
@@ -935,7 +953,7 @@ function demoFind(body){
 let DEMO_RUN=0; const DEMO_STATUS_RUNS={};
 async function demoApi(path,body){
   await new Promise(r=>setTimeout(r,250));
-  if(path==="me") return {name:"Demo user",role:"admin",can_write:true,max_items_per_run:200};
+  if(path==="me") return {name:"Demo user",role:"admin",can_write:true,max_items_per_run:1000,max_archive_per_run:200};
   if(path==="runs"||path==="prompts"||path==="users") return [];
   if(path==="find") return demoFind(body||{});
   if(path==="apply"){
@@ -944,10 +962,12 @@ async function demoApi(path,body){
     return {run_id:"demo_"+(++DEMO_RUN),status:dry?"dry_run_completed":"done",written_ids:ids,succeeded:ids.length,failed:0,skipped_no_longer_matching:0};
   }
   if(path==="status"){
-    const k=body.key, a={not_accepted:["auth_status","not_accepted"],pending_rescan:["status","pending_rescan"],archive:["status","archived"]}[k]; if(!a) throw new Error("Unknown status action.");
+    const k=body.key, a={not_accepted:["auth_status","not_accepted"],pending_rescan:["rescan_at","pending_rescan"],archive:["archived_at","archived"]}[k]; if(!a) throw new Error("Unknown status action.");
+    if(k==="archive"&&body.op==="apply"&&!body.confirm_emailed) throw new Error("Confirm the customer has been emailed before archiving.");
     if((k==="pending_rescan"||k==="archive")&&body.op==="apply"&&(body.item_ids||[]).some(id=>!String((body.notes||{})[id]||body.note||"").trim())) throw new Error((k==="archive"?"Archive":"Pending rescan")+" needs a note.");
-    const list=DEMO_DB[body.view]||[], changes=[];
+    const list=DEMO_DB[body.view]||Object.values(DEMO_DB).flat(), changes=[];
     for(const c of list) if((body.item_ids||[]).includes(c.item_id)){
+      if(TSK[k]){ const at=a[0]; if(body.op==="apply"&&!c[at]) changes.push({item_id:c.item_id,from:null,to:new Date().toISOString()}); if(body.op==="remove"&&c[at]) changes.push({item_id:c.item_id,from:c[at],to:null}); continue; }
       const now=c[a[0]];
       if(body.op==="apply"&&now!==a[1]){ changes.push({item_id:c.item_id,from:now,to:a[1]}); }
       if(body.op==="remove"&&now===a[1]){ const back=a[0]==="auth_status"?"none":((c._was||{})[k]??"pending_review"); changes.push({item_id:c.item_id,from:now,to:back}); }
@@ -958,12 +978,12 @@ async function demoApi(path,body){
   }
   if(path==="status-undo"){
     const r=DEMO_STATUS_RUNS[body.run_id]; if(!r) throw new Error("Run not found.");
-    const list=DEMO_DB[r.view]||[], prev={};
+    const list=DEMO_DB[r.view]||Object.values(DEMO_DB).flat(), prev={};
     for(const ch of r.changes){ const c=list.find(x=>x.item_id===ch.item_id); if(c){ c[r.field]=ch.from; prev[ch.item_id]=ch.from; } }
     return {restored_ids:Object.keys(prev),restored:Object.keys(prev).length,failed:0,previous:prev};
   }
   if(path==="undo") return {ok:true,restored:0};
-  if(path==="live"){ const out={}, ids=(body&&body.ids)||[]; for(const list of Object.values(DEMO_DB)) for(const c of list) if(ids.includes(c.item_id)&&!out[c.item_id]) out[c.item_id]={status:c.status,authenticationStatus:c.auth_status,tag:c.tag}; return out; }
+  if(path==="live"){ const out={}, ids=(body&&body.ids)||[]; for(const list of Object.values(DEMO_DB)) for(const c of list) if(ids.includes(c.item_id)&&!out[c.item_id]) out[c.item_id]={status:c.status,authenticationStatus:c.auth_status,tag:c.tag,archivedAt:c.archived_at||null,rescanRequestedAt:c.rescan_at||null,boxLabel:c.in_box||null}; return out; }
   return {};
 }
 function goDemo(why){
@@ -1020,57 +1040,99 @@ async function find(text){
   if(S.kind==="arena") refreshLive();
 }
 // Archived: change status — Not accepted / Pending rescan / Archive, apply or remove
-const SACTS={not_accepted:{label:"Not accepted",field:"auth",value:"not_accepted",note:false},pending_rescan:{label:"Pending rescan",field:"status",value:"pending_rescan",note:true},archive:{label:"Archive",field:"status",value:"archived",note:true}};
+const SACTS={not_accepted:{label:"Not accepted",field:"auth",value:"not_accepted",note:false},pending_rescan:{label:"Pending rescan",field:"rescan",value:"pending_rescan",note:true},archive:{label:"Archive",field:"archive",value:"archived",note:true}};
+// current value of a status action's field on a card (Archive = admin's "Archived At": set or not)
+const sval=(r,field)=>field==="auth"?r.auth_status:field==="archive"?(r.archived_at?"archived":null):field==="rescan"?(r.rescan_at?"pending_rescan":null):r.status;
+const sprop=field=>field==="auth"?"auth_status":field==="archive"?"archived_at":field==="rescan"?"rescan_at":"status";
+// Archive and Pending rescan are admin's date buttons (Archived At / Rescan Requested At → Set / Unset)
+const TSK={archive:{at:"archived_at",live:"archivedAt",what:"archived",field:"Archived At",title:"Archive"},pending_rescan:{at:"rescan_at",live:"rescanRequestedAt",what:"marked for rescan",field:"Rescan Requested At",title:"Rescan"}};
+const fmtAt=v=>{ if(!v) return ""; const d=new Date(String(v).replace(" ","T")); return isNaN(d)?String(v):d.toLocaleString([],{day:"numeric",month:"short",year:"2-digit",hour:"numeric",minute:"2-digit"}); };
+const arcHtml=r=>r&&r.archived_at?`<span class="ast st-archived">${esc(fmtAt(r.archived_at))}</span>`:"";
+const rscHtml=r=>r&&r.rescan_at?`<span class="ast st-pending_rescan">${esc(fmtAt(r.rescan_at))}</span>`:"";
 function statusActions(locked){
   const a=S.sact;
   const btn=(k,op)=>`<button type="button" class="sabtn${a&&a.key===k&&a.op===op?" on":""}${op==="remove"?" rm":""}" data-sk="${k}" data-sop="${op}" ${locked?"disabled":""}>${op==="apply"?"Apply":"Remove"}</button>`;
   return `<div class="sact" role="group" aria-label="Change status"><span class="dim small">Change status:</span>
-    ${Object.entries(SACTS).map(([k,v])=>`<span class="sagrp"><b class="sa-${k}">${v.label}</b>${btn(k,"apply")}${btn(k,"remove")}</span>`).join("")}
+    ${Object.entries(SACTS).filter(([k])=>S.kind!=="cards"||k==="archive").map(([k,v])=>`<span class="sagrp"><b class="sa-${k}">${v.label}</b>${btn(k,"apply")}${btn(k,"remove")}</span>`).join("")}
     ${a?`<button type="button" class="btn link" id="saCancel" ${locked?"disabled":""}>Back to tagging</button>`:""}</div>
-    ${a&&a.key==="archive"&&a.op==="apply"?(()=>{ const ex=saTargets().hit.slice(0,3); return `<div class="sanote"><div><b>Note for each card</b> <span class="dim small">value range · side · issue type, built from each card and saved to its operation log</span></div>
-      <div class="saprev">${ex.length?ex.map(r=>`<div><span class="dim">8AC ${esc(r.ac)}</span> → <b>${esc(cardNote(r,"archive",S.snote))||'<span style="color:var(--warn)">no value, side or issue: type a note</span>'}</b></div>`).join(""):'<span class="dim">Select cards to see their notes.</span>'}${saTargets().hit.length>3?`<div class="dim">+ ${saTargets().hit.length-3} more, each with its own value range · side · issue type</div>`:""}</div>
-      <label for="saNote" class="dim small">Add to every note (optional)</label><textarea id="saNote" rows="2" maxlength="400" placeholder="e.g. archive, slab cracked" ${locked?"disabled":""}>${esc(S.snote||"")}</textarea></div>`; })():""}
-    ${a&&SACTS[a.key].note&&a.op==="apply"&&a.key!=="archive"?`<div class="sanote"><label for="saNote"><b>Note</b> <span class="dim small">(required for ${SACTS[a.key].label.toLowerCase()}, saved to the operation log)</span></label><textarea id="saNote" rows="2" maxlength="500" placeholder="${a.key==="archive"?"e.g. $99 BS Penmark, archive":"e.g. FS hair, rescan front"}" ${locked?"disabled":""}>${esc(S.snote||"")}</textarea></div>`:""}`;
+    ${a&&TSK[a.key]&&a.op==="apply"?archivePanel(locked,a.key):""}
+    ${a&&SACTS[a.key].note&&a.op==="apply"&&!TSK[a.key]?`<div class="sanote"><label for="saNote"><b>Note</b> <span class="dim small">(required for ${SACTS[a.key].label.toLowerCase()}, saved to the operation log)</span></label><textarea id="saNote" rows="2" maxlength="500" placeholder="${a.key==="archive"?"e.g. $99 BS Penmark, archive":"e.g. FS hair, rescan front"}" ${locked?"disabled":""}>${esc(S.snote||"")}</textarea></div>`:""}`;
+}
+// Archive note panel: one row of pills per selected card (each starts from that card's archive log),
+// plus "Set all" pills on top when more than one card is selected. Nothing is written until Yes, archive.
+function archivePanel(locked,key="archive"){
+  const T=TSK[key], sel=saTargets().sel, many=sel.length>1;
+  const opts={vr:["<499","500+"],side:["FS","BS"],type:ISSUE_TYPES.map(([n])=>n)}, lbl={vr:"Value",side:"Side",type:"Issue"};
+  const pill=(id,g,v,on)=>`<button type="button" class="npill${on?" on":""}" data-nid="${esc(id)}" data-ng="${g}" data-nv="${esc(v)}" aria-pressed="${on}" ${locked?"disabled":""}>${esc(v)}</button>`;
+  const groups=(id,isOn)=>["vr","side","type"].map(g=>`<div class="npills"><span class="dim small">${lbl[g]}</span>${opts[g].map(v=>pill(id,g,v,isOn(g,v))).join("")}</div>`).join("");
+  const live=sel.filter(r=>!r[T.at]);
+  const head=many?`<div class="nall"><div><b>Set all ${live.length}</b> <span class="dim small">fills every card below; change any card after</span></div>${groups("*",(g,v)=>live.length>0&&live.every(r=>notePick(r)[g]===v))}</div>`:"";
+  const rows=sel.map(r=>{ const p=notePick(r), note=cardNote(r,key,S.snote);
+    return `<div class="nrow${r[T.at]?" done":""}"><div class="nrowh"><span class="dim">8AC ${esc(r.ac||r.ac_number||"")}</span> → <b data-prev="${esc(r.item_id)}">${note?esc(note):'<span style="color:var(--warn)">pick a value, side or issue</span>'}</b>${r[T.at]?` <span style="color:var(--warn)">already ${T.what} in admin (${esc(fmtAt(r[T.at]))}), skipped. Remove first to do it again.</span>`:""}</div>${groups(r.item_id,(g,v)=>p[g]===v)}</div>`; }).join("");
+  return `<div class="sanote"><div><b>${T.title} note${many?"s":""}</b> <span class="dim small">click to pick; each card's note goes to its operation log in admin when you confirm${key==="pending_rescan"?` (as "Manually set rescanRequestedAt <i>note</i>")`:""}</span></div>
+    ${head}${sel.length?`<div class="nrows">${rows}</div>`:'<div class="saprev"><span class="dim">Select cards to build their notes.</span></div>'}
+    <label for="saNote" class="dim small">Add to ${many?"every":"the"} note (optional)</label><textarea id="saNote" rows="2" maxlength="400" placeholder="e.g. slab cracked" ${locked?"disabled":""}>${esc(S.snote||"")}</textarea></div>`;
 }
 // Archive note, built for each card: value range, side, issue type (e.g. "<499 FS Damage"), plus anything typed in the box.
 // Issue type uses the archive rules, checked in this order: the first match wins.
 const ISSUE_TYPES=[["Grading Company Issues",/grading compan|grading co\b|do not accept|don'?t accept|not accept/i],["Altered",/alter|trim|mis ?cut/i],["Damage",/damage|crack|chip|dent|\bben[dt]/i],["Sticker",/stic?ker|residue|\blabel|tear|pen ?mark|\bink\b/i],["Fiber",/fib(er|re)|\bfbr\b|hair|debris|dust/i],["Image",/distort|no image|out of scanner|double im(a?ge?|g)|blur/i]];
 function issueType(issue,note){ const t=`${issue||""} ${note||""}`; for(const [name,re] of ISSUE_TYPES) if(re.test(t)) return name; return issue||""; }
 function valueRange(r){ if(r.value_range&&/^(<\s*499|500\s*\+)$/.test(r.value_range.trim())) return r.value_range.trim(); return r.ev?(r.ev>=500?"500+":"<499"):""; }
-function autoNote(r){
-  const x=(r.notes||[])[0]||{};
-  const side=x.side&&!/not noted/i.test(x.side)?x.side:"";
-  return [valueRange(r),side,issueType(x.issue,x.note)].filter(Boolean).join(" ");
+// Archive note pills: value range · side · issue type. Start from the card's archive log, a click overrides (click again to clear).
+function notePick(r){
+  const x=(r.notes||[])[0]||{}, o=(S.npick||{})[r.item_id]||{};
+  const side=(String(x.side||"").toUpperCase().match(/\b(FS|BS)\b/)||[])[1]||"";
+  return {vr:o.vr??valueRange(r), side:o.side??side, type:o.type??issueType(x.issue,x.note)};
 }
-function cardNote(r,key,extra){ const e=(extra||"").trim(); return key==="archive"?[autoNote(r),e].filter(Boolean).join(" · "):e; }
+function autoNote(r){ const p=notePick(r); return [p.vr,p.side,p.type].filter(Boolean).join(" "); }
+function cardNote(r,key,extra){ const e=(extra||"").trim(); return TSK[key]?[autoNote(r),e].filter(Boolean).join(" · "):e; }
 function saTargets(){ // cards this change would touch
-  const a=S.sact, v=SACTS[a.key], f=r=>v.field==="auth"?r.auth_status:r.status;
+  const a=S.sact, v=SACTS[a.key], f=r=>sval(r,v.field);
   const sel=S.rows.filter(r=>S.selected.has(r.item_id));
   const hit=sel.filter(r=>a.op==="apply"?f(r)!==v.value:f(r)===v.value);
   return {sel,hit,skip:sel.length-hit.length};
 }
 async function statusRun(dry){
-  const a=S.sact, v=SACTS[a.key], {hit,skip}=saTargets();
+  const a=S.sact, v=SACTS[a.key], arc=a.key==="archive", T=TSK[a.key];
+  if(T&&NOUN()==="watches"){ $("#barmsg").innerHTML=`<span style="color:var(--warn)">${v.label} on watches isn't set up yet: capture admin's ${T.field} Set on a watch page and send it over.</span>`; return; }
+  // Set: read the cards from admin first (the date and the box they're in; Metabase lags)
+  if(T&&a.op==="apply"){ const sel=saTargets().sel, ids=sel.map(r=>r.item_id).filter(id=>/^[0-9a-f-]{36}$/i.test(id));
+    try{ const live=await api("live",{ids}); for(const r of sel){ const d=live[r.item_id]; if(d){ r.archived_at=d.archivedAt||null; r.rescan_at=d.rescanRequestedAt||null; r.in_box=d.boxLabel||null; } } }
+    catch(e){ $("#barmsg").innerHTML=`<span style="color:var(--warn)">Couldn't read the card from admin: ${esc(e.message)}</span>`; return; }
+    recompute(false); }
+  const {hit,skip}=saTargets();
+  if(T&&!hit.length){ $("#barmsg").innerHTML=`<span style="color:var(--warn)">${a.op==="apply"?`The selected cards are already ${T.what} in admin.`:`None of the selected cards are ${T.what} in admin.`}</span>`; return; }
+  const cap=T?(window.MAX_ARCHIVE||200):(window.MAX_ITEMS||1000);
+  if(hit.length>cap){ $("#barmsg").innerHTML=`<span style="color:var(--warn)">${hit.length.toLocaleString()} cards is over the ${cap.toLocaleString()}-card ${T?v.label.toLowerCase()+" ":""}limit. Deselect some or narrow the search.</span>`; return; }
   const note=(S.snote||"").trim();
   const notes=a.op==="apply"&&v.note?Object.fromEntries(hit.map(r=>[r.item_id,cardNote(r,a.key,note)])):{};
-  const ok=await ask({title:`${a.op==="apply"?"Set":"Remove"} ${v.value} on ${hit.length} card${hit.length===1?"":"s"}?`,
-    body:`${dry?"<b>Dry run:</b> records what would change without writing to admin.<br><br>":""}${a.op==="apply"?`${v.field==="auth"?"Authentication status":"Card status"} becomes <b>${esc(v.value)}</b>.`:`Cards go back to the ${v.field==="auth"?"authentication status <b>none</b>":"status they had before"}.`}${a.op==="apply"&&v.note?(a.key==="archive"?`<br>Each card gets its own note, e.g. <i>${esc(notes[hit[0]?.item_id]||"")}</i>`:`<br>Note: <i>${esc(note)}</i>`):""}${skip?`<br><span class="dim">${skip} selected card${skip===1?" is":"s are"} skipped (${a.op==="apply"?"already":"not"} ${esc(v.value)}).</span>`:""}<br>You can undo this afterward.`,
-    yes:dry?"Run dry run":a.op==="apply"?`Yes, set ${v.value}`:"Yes, remove it", danger:a.op==="remove"&&!dry});
+  const blank=T&&a.op==="apply"?hit.filter(r=>!notes[r.item_id]):[];
+  if(blank.length){ $("#barmsg").innerHTML=`<span style="color:var(--warn)">Pick a note for ${blank.map(r=>"8AC "+esc(r.ac||r.ac_number||"")).join(", ")}.</span>`; return; }
+  // the two questions admin's Set button asks in pop-ups, as checkboxes that must be ticked
+  const boxed=arc&&a.op==="apply"?hit.filter(r=>r.in_box):[];
+  const checks=arc&&a.op==="apply"?`<div class="archchk"><label><input type="checkbox" id="chkEmailed"> I've emailed the customer</label>${boxed.length?`<div class="dim small">Still in a box in admin. Tick each one once it's been pulled:</div>`+boxed.map(r=>`<label><input type="checkbox" class="chkUnboxed"> 8AC ${esc(r.ac||r.ac_number||r.item_id)} has been removed from box <b>${esc(r.in_box)}</b></label>`).join(""):""}</div>`:"";
+  const what=a.key==="pending_rescan"?(a.op==="apply"?"Rescan Requested At is set to now, same as admin's <b>Set</b> button. Admin logs a note: <i>Manually set rescanRequestedAt</i> plus each card's note.":"Rescan Requested At is cleared, same as admin's <b>Unset</b> button."):arc?(a.op==="apply"?"Archived At is set to now and the card comes off the marketplace, same as admin's <b>Set</b> button. Admin logs it as an archive with each card's note.":"Archived At is cleared, same as admin's <b>Unset</b> button."):a.op==="apply"?`${v.field==="auth"?"Authentication status":"Card status"} becomes <b>${esc(v.value)}</b>.`:`Cards go back to the ${v.field==="auth"?"authentication status <b>none</b>":"status they had before"}.`;
+  const asking=ask({title:`${a.op==="apply"?"Set":"Remove"} ${v.value} on ${hit.length} card${hit.length===1?"":"s"}?`,
+    body:`${dry?"<b>Dry run:</b> records what would change without writing to admin.<br><br>":""}${what}${a.op==="apply"&&v.note?(T?`<br>Each card gets its own note, e.g. <i>${esc(notes[hit[0]?.item_id]||"")}</i>`:`<br>Note: <i>${esc(note)}</i>`):""}${skip?`<br><span class="dim">${skip} selected card${skip===1?" is":"s are"} skipped (${a.op==="apply"?"already":"not"} ${esc(v.value)}).</span>`:""}<br>You can undo this afterward.${checks}`,
+    yes:dry?"Run dry run":a.key==="pending_rescan"?(a.op==="apply"?"Yes, request rescan":"Yes, unset"):arc?(a.op==="apply"?"Yes, archive":"Yes, unset"):a.op==="apply"?`Yes, set ${v.value}`:"Yes, remove it", danger:a.op==="remove"&&!dry});
+  if(checks){ const y=$("#dlgYes"), boxes=[...document.querySelectorAll("#dlgBody .archchk input")]; const upd=()=>{ y.disabled=!boxes.every(x=>x.checked); }; boxes.forEach(x=>x.onchange=upd); upd(); }
+  const ok=await asking;
   if(!ok) return;
+  const confirm_emailed=!!$("#chkEmailed")?.checked, confirm_unboxed=[...document.querySelectorAll("#dlgBody .chkUnboxed")].every(x=>x.checked);
   const cb=$("#confirmBtn"); cb.disabled=true; $("#barmsg").innerHTML=`<span class="spin"></span>${dry?"Dry run":"Writing to admin"}… ${hit.length} cards`;
   let res;
-  try{ res=await api("status",{kind:S.kind,view:S.kind==="arena"?"arena":S.view,text:S.text,key:a.key,op:a.op,note,notes,item_ids:hit.map(r=>r.item_id),dry_run:dry}); }
+  try{ res=await api("status",{kind:S.kind,view:S.kind==="arena"?"arena":S.kind==="cards"?"cards":S.view,text:S.text,key:a.key,op:a.op,note,notes,item_ids:hit.map(r=>r.item_id),dry_run:dry,confirm_emailed,confirm_unboxed}); }
   catch(e){ cb.disabled=false; $("#barmsg").innerHTML=`<span style="color:var(--warn)">${esc(e.message)}</span>`; if(/Refresh from admin/.test(e.message)&&(ARCHK(S.kind)||S.kind==="arena")) refreshArchived().then(()=>{ $("#barmsg").innerHTML=`<span style="color:var(--warn)">${esc(e.message.replace(/ Click ↻ Refresh from admin to see their current status\./,""))} The cards now show their current status from admin.</span>`; }); return; }
-  const field=v.field==="auth"?"auth_status":"status";
-  if(!res.dry_run){ const to=new Map((res.changes||[]).map(c=>[c.item_id,c.to])); for(const r of S.matched) if((res.written_ids||[]).includes(r.item_id)){ r[field]=to.get(r.item_id); if(a.op==="apply"&&v.note&&notes[r.item_id]) r.notes=[{side:null,issue:v.label,note:notes[r.item_id],logged_at:new Date().toISOString(),note_type:"Note"},...(r.notes||[])]; } }
+  const field=sprop(v.field);
+  if(!res.dry_run){ const to=new Map((res.changes||[]).map(c=>[c.item_id,c.to])); for(const r of S.matched) if((res.written_ids||[]).includes(r.item_id)){ r[field]=to.get(r.item_id)||null; if(a.op==="apply"&&v.note&&notes[r.item_id]) r.notes=[{side:null,issue:v.label,note:notes[r.item_id],logged_at:new Date().toISOString(),note_type:"Note"},...(r.notes||[])]; } }
   const n=res.dry_run?(res.changes||[]).length:(res.written_ids||[]).length;
   recompute(false);
   const fails=res.failed?` <span style="color:var(--warn)">${res.failed} failed — ${esc(String((res.failures||[])[0]?.error||"").slice(0,160))}</span>`:"";
   $("#barmsg").innerHTML=res.dry_run?`<b>Dry run done.</b> ${n} card${n===1?"":"s"} would ${a.op==="apply"?`be set to ${esc(v.value)}`:`have ${esc(v.value)} removed`}. Nothing was written.`
     :`<b class="done-badge" style="font-size:14px">✓ ${n} card${n===1?"":"s"} ${a.op==="apply"?`set to ${esc(v.value)}`:`no longer ${esc(v.value)}`}.</b>${fails} ${n?`<button class="btn link" id="saUndo" type="button">Undo</button>`:""}`;
   const u=$("#saUndo"); if(u) u.onclick=async()=>{
-    if(!await ask({title:"Undo this status change?",body:`Puts ${n} card${n===1?"":"s"} back to the ${v.field==="auth"?"authentication status":"status"} they had before.`,yes:"Yes, undo",danger:true})) return;
-    try{ const r=await api("status-undo",{run_id:res.run_id}); for(const c of S.matched) if(r.previous&&c.item_id in r.previous&&(r.restored_ids||[]).includes(c.item_id)) c[field]=r.previous[c.item_id]; recompute(false); $("#barmsg").innerHTML=`<b>Undone.</b> ${r.restored} card${r.restored===1?"":"s"} put back.`; }
+    if(!await ask({title:"Undo this status change?",body:`Puts ${n} card${n===1?"":"s"} back to the ${v.field==="auth"?"authentication status":v.field==="archive"?"Archived At":"status"} they had before.`,yes:"Yes, undo",danger:true})) return;
+    try{ const r=await api("status-undo",{run_id:res.run_id}); for(const c of S.matched) if(r.previous&&c.item_id in r.previous&&(r.restored_ids||[]).includes(c.item_id)) c[field]=r.previous[c.item_id]||null; recompute(false); $("#barmsg").innerHTML=`<b>Undone.</b> ${r.restored} card${r.restored===1?"":"s"} put back.`; }
     catch(e){ $("#barmsg").innerHTML=`<span style="color:var(--warn)">${esc(e.message)}</span>`; }
   };
 }
@@ -1260,12 +1322,15 @@ async function refreshArchived(){
   if(S!==mine) return;
   let changed=0, seen=0;
   for(const r of mine.matched){ const d=live[r.item_id]; if(!d) continue; seen++;
-    const before=JSON.stringify([r.status,r.auth_status,r.tag,r.img]);
+    const before=JSON.stringify([r.status,r.auth_status,r.tag,r.img,r.archived_at,r.rescan_at]);
+    if(d.archivedAt!==undefined) r.archived_at=d.archivedAt||null;
+    if(d.rescanRequestedAt!==undefined) r.rescan_at=d.rescanRequestedAt||null;
+    if(d.boxLabel!==undefined) r.in_box=d.boxLabel||null;
     if(d.status!==undefined) r.status=d.status;
     if(d.authenticationStatus!==undefined) r.auth_status=d.authenticationStatus;
     if(d.tag!==undefined) r.tag=d.tag||null;
     if(!r.img&&d.frontSlabPictureUrl) r.img=d.frontSlabPictureUrl;
-    if(JSON.stringify([r.status,r.auth_status,r.tag,r.img])!==before) changed++;
+    if(JSON.stringify([r.status,r.auth_status,r.tag,r.img,r.archived_at,r.rescan_at])!==before) changed++;
   }
   recompute(false);
   const m=$("#srcMsg"); if(m) m.innerHTML=err?`<span class="warn-txt">Couldn't refresh from admin: ${esc(err)}</span>`:`Refreshed from admin · ${seen} of ${ids.length} cards read · ${changed} changed`;
@@ -1360,7 +1425,7 @@ function renderInner(){
         <button type="button" class="btn" id="archLiveBtn" title="Re-read every card's status, authentication status, tag and photo straight from admin (Metabase updates on a delay)">↻ Refresh from admin</button>`:""}</div>
       ${locked?"":`<div class="selbar"><button class="btn link" type="button" id="all">Select all</button><button class="btn link" type="button" id="none">Clear</button></div>`}
     </div>
-    ${ARCHK(S.kind)||S.kind==="arena"?`<div class="sactwrap">${statusActions(locked)}</div>`:""}
+    ${ARCHK(S.kind)||S.kind==="arena"||S.kind==="cards"?`<div class="sactwrap">${statusActions(locked)}</div>`:""}
     ${S.missing&&S.missing.length&&!locked?`<div class="warn"><b>Nothing found for ${esc(S.missing.join(", "))}.</b> ${S.missing.length<[].concat(S.filters.player_name).length?"Showing only the names that matched.":"Nothing else was selected."}</div>`:""}
     ${replacing&&!locked?`<div class="warn"><b>${replacing} selected ${replacing===1?"card already has":"cards already have"} a different tag.</b> A card holds one tag, so it will be replaced. Tick "Skip cards that already have a tag" or deselect them to keep it.</div>`:""}
   </div>`;
@@ -1447,7 +1512,7 @@ function asWatch(r){
 function archRows(r){
   const x=(r.notes||[])[0]||{}, more=(r.notes||[]).length-1, dash='<span class="dim">—</span>';
   const row=(k,v,t)=>`<dt>${k}</dt><dd${t?` title="${esc(t)}"`:""}><span class="a1">${v==null||v===""?dash:v}</span></dd>`;
-  return `<dl class="wspecs aspecs ablk">${row("Status",stHtml(r.status,1),r.status)}${row("Auth",authHtml(r.auth_status),r.auth_status)}${row("Side",x.side?`<span class="aside">${esc(x.side)}</span>`:"")}${row("Issue",x.issue?`<b>${esc(x.issue)}</b>`:"",x.issue)}${row("Note",x.note?esc(x.note)+(more>0?` <span class="dim">(+${more})</span>`:""):"",x.note)}</dl>`;
+  return `<dl class="wspecs aspecs ablk">${row("Status",stHtml(r.status,1),r.status)}${row("Auth",authHtml(r.auth_status),r.auth_status)}${r.archived_at?row("Archived",arcHtml(r),r.archived_at):""}${r.rescan_at?row("Rescan",rscHtml(r),r.rescan_at):""}${row("Side",x.side?`<span class="aside">${esc(x.side)}</span>`:"")}${row("Issue",x.issue?`<b>${esc(x.issue)}</b>`:"",x.issue)}${row("Note",x.note?esc(x.note)+(more>0?` <span class="dim">(+${more})</span>`:""):"",x.note)}</dl>`;
 }
 function orderRows(r){
   const dash='<span class="dim">—</span>', row=(k,v,t)=>`<dt>${k}</dt><dd${t?` title="${esc(t)}"`:""}><span class="a1">${v==null||v===""?dash:v}</span></dd>`;
@@ -1464,7 +1529,7 @@ function archTile(r,on,change){
   const sub=[r.set_name,r.insert,r.set_number&&"#"+r.set_number,r.parallel_name].filter(Boolean).join(" · ");
   const d=x.logged_at?new Date(String(x.logged_at).replace(" ","T")):null;
   const logged=d&&!isNaN(d)?d.toLocaleString([], {month:"numeric",day:"numeric",hour:"numeric",minute:"2-digit"}):(x.logged_at||"");
-  const specs=row("Status",stHtml(r.status,1),r.status)+row("Auth",authHtml(r.auth_status),r.auth_status)+row("Owner",esc(r.order_owner||""),r.order_owner)
+  const specs=row("Status",stHtml(r.status,1),r.status)+row("Auth",authHtml(r.auth_status),r.auth_status)+(r.archived_at?row("Archived",arcHtml(r),r.archived_at):"")+(r.rescan_at?row("Rescan",rscHtml(r),r.rescan_at):"")+row("Owner",esc(r.order_owner||""),r.order_owner)
     +row("Value",esc(r.value_range||""))+row("Side",x.side?`<span class="aside">${esc(x.side)}</span>`:"")+row("Issue",x.issue?`<b>${esc(x.issue)}</b>`:"",x.issue)
     +row("Note",x.note?esc(x.note)+(more>0?` <span class="dim">(+${more})</span>`:""):"",x.note)+row("Logged",logged?esc(logged)+" PT":"");
   const ids=row("Card",r.card_url?`<span class="alink clickme" role="link" tabindex="0" data-href="${esc(r.card_url)}" title="Open card in admin">Click Me</span>`:"")
@@ -1496,6 +1561,8 @@ function archInfo(r){
       ${f("8AC",r.ac?`<b>${esc(r.ac)}</b>`:"",r.ac?cp(r.ac):"")}
       ${f("Card status",stHtml(r.status))}
       ${f("Auth status",authHtml(r.auth_status))}
+      ${r.archived_at?f("Archived at",arcHtml(r)):""}
+      ${r.rescan_at?f("Rescan requested",rscHtml(r)):""}
       ${f("Order owner",esc(r.order_owner))}
       ${f("Value range",esc(r.value_range))}
       ${f("Side",x.side?`<span class="aside">${esc(x.side)}</span>`:"")}
@@ -1688,7 +1755,7 @@ function archInfoBody(r,row,join){
         <div class="dim small">${esc(sub||[r.grade_type,r.value_range].filter(Boolean).join(" · "))}</div>
         <dl class="ainfo">
           ${row("Estimated value",r.ev?money(r.ev):"")}
-          ${raw("Card status",stHtml(r.status))}${raw("Auth status",authHtml(r.auth_status))}
+          ${raw("Card status",stHtml(r.status))}${raw("Auth status",authHtml(r.auth_status))}${raw("Archived at",arcHtml(r))}${raw("Rescan requested at",rscHtml(r))}
           ${row("Order owner",r.order_owner)}${row("Grade type",r.grade_type)}${row("Value range",r.value_range)}
           ${raw("Side",side)}${raw("Issue",x.issue?`<b>${esc(x.issue)}</b>`:"")}${row("Note",x.note)}
           ${row("Logged",x.logged_at?ARCH_DT(x.logged_at)+" PT":"")}${row("Note type",x.note_type)}
@@ -1721,7 +1788,7 @@ function renderBar(n,replacing){
   }
   if(S.phase==="review"){
     const bad=S.action==="set"&&!/^[a-z0-9_]+$/.test(S.tag);
-    const CAP=window.MAX_ITEMS||200;
+    const CAP=window.MAX_ITEMS||1000;
     cb.hidden=false; cb.disabled=!n||bad||n>CAP;
     cb.textContent=S.action==="set"?`Confirm tags (${n})`:`Remove tags (${n})`;
     cb.className="btn big "+(S.action==="set"?"primary":"danger");
@@ -1749,9 +1816,15 @@ function bindSummary(){
   const lb=$("#liveBtn"); if(lb) lb.onclick=async()=>{ lb.disabled=true; lb.textContent="Refreshing…"; await refreshLive(); };
   const alb=$("#archLiveBtn"); if(alb) alb.onclick=async()=>{ alb.disabled=true; alb.textContent="Refreshing…"; await refreshArchived(); };
   const o75=$("#only75"); if(o75) o75.onclick=()=>{ S.only75=!S.only75; recompute(true); };
-  document.querySelectorAll(".sabtn").forEach(b=>b.onclick=()=>{ const k=b.dataset.sk, op=b.dataset.sop; S.sact=(S.sact&&S.sact.key===k&&S.sact.op===op)?null:{key:k,op}; render(); const t=$("#saNote"); if(t) t.focus(); });
+  document.querySelectorAll(".sabtn").forEach(b=>b.onclick=()=>{ const k=b.dataset.sk, op=b.dataset.sop; S.sact=(S.sact&&S.sact.key===k&&S.sact.op===op)?null:{key:k,op}; S.npick={}; render(); const t=$("#saNote"); if(t) t.focus(); });
   const sc=$("#saCancel"); if(sc) sc.onclick=()=>{ S.sact=null; render(); };
-  const sn=$("#saNote"); if(sn) sn.oninput=()=>{ S.snote=sn.value; const pv=document.querySelector(".saprev"); if(pv&&S.sact&&S.sact.key==="archive"){ const ex=saTargets().hit.slice(0,3); pv.querySelectorAll(":scope>div>b").forEach((b,i)=>{ if(ex[i]) b.textContent=cardNote(ex[i],"archive",S.snote)||""; }); } const n=S.rows.filter(r=>S.selected.has(r.item_id)).length; renderBar(n,0); };
+  document.querySelectorAll(".npill").forEach(b=>b.onclick=()=>{ const id=b.dataset.nid, g=b.dataset.ng, v=b.dataset.nv, sel=saTargets().sel; S.npick=S.npick||{};
+    const set=(r,val)=>{ (S.npick[r.item_id]=S.npick[r.item_id]||{})[g]=val; };
+    const at=(TSK[S.sact&&S.sact.key]||TSK.archive).at;
+    if(id==="*"){ const live=sel.filter(r=>!r[at]), on=live.length&&live.every(r=>notePick(r)[g]===v); live.forEach(r=>set(r,on?"":v)); } // Set all: click a lit pill to clear it on every card
+    else { const r=sel.find(x=>x.item_id===id); if(r) set(r,notePick(r)[g]===v?"":v); }
+    render(); });
+  const sn=$("#saNote"); if(sn) sn.oninput=()=>{ S.snote=sn.value; if(S.sact&&TSK[S.sact.key]) for(const r of saTargets().sel){ const b=document.querySelector(`[data-prev="${CSS.escape(r.item_id)}"]`); if(b) b.textContent=cardNote(r,S.sact.key,S.snote)||""; } const n=S.rows.filter(r=>S.selected.has(r.item_id)).length; renderBar(n,0); };
   document.querySelectorAll(".stchip").forEach(b=>b.onclick=()=>{ const k=b.dataset.st; if(!k) S.stat=new Set(); else { S.stat.has(k)?S.stat.delete(k):S.stat.add(k); } recompute(true); });
   const bo=$("#backOrders"); if(bo) bo.onclick=()=>{ S.order=null; recompute(true); };
   document.querySelectorAll(".obtn").forEach(b=>b.onclick=()=>{ S.order=S.order===b.dataset.order?null:b.dataset.order; recompute(true); });
@@ -2097,7 +2170,7 @@ async function boot(){
   $("#whoami").innerHTML=`Signed in as <b>${esc(me.user)}</b><span class="rolebadge">${esc(me.role)}</span>`;
   $("#tabBtn-users").hidden=!me.is_admin;
   document.body.classList.toggle("readonly",!me.can_write);
-  window.MAX_ITEMS=me.max_items_per_run||200;
+  window.MAX_ITEMS=me.max_items_per_run||1000; window.MAX_ARCHIVE=me.max_archive_per_run||200;
   const b=$("#modeBadge");
   if(me.dry_run){ b.textContent="DRY RUN — nothing is written"; b.className="mode"; $("#dry").checked=true; $("#dry").disabled=true; $("#foot").textContent="DRY_RUN is on in Vercel, so every run is recorded but nothing is written to admin."; }
   else{ b.textContent="LIVE — writes to admin"; b.className="mode live"; }

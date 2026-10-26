@@ -17,6 +17,7 @@ export type ArchivedCard = {
   kind: "archived"; view: ArchivedView; item_id: string; ac: string; cert: string; order_number: string; order_user_id: string | null;
   player_name: string; set_name: string; insert: string | null; set_number: string | null; parallel_name: string | null;
   grade: string; grading_company: string; ev: number; tag: string | null; img: string | null; card_url: string | null;
+  archived_at: string | null; rescan_at: string | null; in_box: string | null;
   status: string | null; auth_status: string | null; order_owner: string | null; grade_type: string | null; value_range: string | null;
   parallel_total: string | null; order_url: string | null; order_status: string | null; order_source: string | null; order_kind: string | null; order_full_name: string | null;
   owner_type: string | null; owner_full_name: string | null; owner_username: string | null; owner_email: string | null; in_warehouse: string | null; item_status: string | null; cards_in_order: number | null;
@@ -52,6 +53,7 @@ function toCard(o0: Record<string, unknown>, view: ArchivedView, i: number): Arc
     grading_company: (s(pick(o, "GRADING_COMPANY")) ?? "").toLowerCase(),
     ev: n(pick(o, "ESTIMATED_VALUE")) ?? 0,
     tag: s(pick(o, "TAG")),
+    archived_at: s(pick(o, "ARCHIVED_AT")), rescan_at: s(pick(o, "RESCAN_REQUESTED_AT")), in_box: s(pick(o, "BOX_NUMBER", "BOX_ID")),
     img: img && /^https?:\/\//.test(img) ? img : null,
     card_url: s(pick(o, "CARD_URL")),
     status: s(pick(o, "CARD_STATUS", "ITEM_STATUS", "STATUS")),

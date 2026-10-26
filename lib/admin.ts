@@ -351,6 +351,11 @@ export async function liveCards(session: AdminSession, ids: string[]) {
       const pick: Record<string, unknown> = {};
       for (const k of ["overall", "centering", "corners", "edges", "surface", "frontSlabPictureUrl", "frontLabelPictureUrl", "backLabelPictureUrl", "tag", "status", "authenticationStatus"])
         if (c[k] !== undefined) pick[k] = c[k];
+      pick.archivedAt = c.archivedAt ?? null;
+      pick.rescanRequestedAt = c.rescanRequestedAt ?? null;
+      // the box admin still has the card in (its Archive Set asks "Has it been removed from the box?")
+      const b = c.box && typeof c.box === "object" ? c.box.number ?? c.box.name ?? c.box.id : c.box ?? c.boxNumber ?? c.boxId;
+      pick.boxLabel = b === undefined || b === null || b === "" ? null : String(b);
       out[id] = pick;
     } catch { /* leave this card as Metabase had it */ }
   };

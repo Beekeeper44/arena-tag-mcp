@@ -84,7 +84,8 @@ export const config = {
 
   // Safety
   dryRun: () => (process.env.DRY_RUN ?? "true").toLowerCase() !== "false",
-  maxItemsPerRun: () => num("MAX_ITEMS_PER_RUN", 200),
+  maxItemsPerRun: () => num("MAX_ITEMS_PER_RUN", 1000), // tagging and the other status changes
+  maxArchivePerRun: () => num("MAX_ARCHIVE_PER_RUN", 200), // Archive: 3 admin calls per card
   writeConcurrency: () => num("WRITE_CONCURRENCY", 5),
   runExpiryHours: () => num("RUN_EXPIRY_HOURS", 24),
   // Optional comma-separated allowlist. Empty = any tag matching /^[a-z0-9_]+$/
