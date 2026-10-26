@@ -1320,8 +1320,8 @@ async function refreshArchived(){
   let live={}, err="";
   try{ live=await api("live",{ids}); }catch(e){ err=e.message; }
   if(S!==mine) return;
-  let changed=0, seen=0;
-  for(const r of mine.matched){ const d=live[r.item_id]; if(!d) continue; seen++;
+  let changed=0, seen=0, noTag=0;
+  for(const r of mine.matched){ const d=live[r.item_id]; if(!d) continue; seen++; if(d.tag===undefined) noTag++;
     const before=JSON.stringify([r.status,r.auth_status,r.tag,r.img,r.archived_at,r.rescan_at]);
     if(d.archivedAt!==undefined) r.archived_at=d.archivedAt||null;
     if(d.rescanRequestedAt!==undefined) r.rescan_at=d.rescanRequestedAt||null;
@@ -1333,7 +1333,7 @@ async function refreshArchived(){
     if(JSON.stringify([r.status,r.auth_status,r.tag,r.img,r.archived_at,r.rescan_at])!==before) changed++;
   }
   recompute(false);
-  const m=$("#srcMsg"); if(m) m.innerHTML=err?`<span class="warn-txt">Couldn't refresh from admin: ${esc(err)}</span>`:`Refreshed from admin · ${seen} of ${ids.length} cards read · ${changed} changed`;
+  const m=$("#srcMsg"); if(m) m.innerHTML=err?`<span class="warn-txt">Couldn't refresh from admin: ${esc(err)}</span>`:`Refreshed from admin · ${seen} of ${ids.length} cards read · ${changed} changed${noTag?` · <span class="warn-txt">admin's reply had no tag for ${noTag} card${noTag===1?"":"s"}, so ${noTag===1?"its":"their"} tag wasn't updated</span>`:""}`;
 }
 async function refreshLive(){
   const mine=S; if(!mine||!mine.matched.length) return;

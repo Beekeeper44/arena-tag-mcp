@@ -349,8 +349,12 @@ export async function liveCards(session: AdminSession, ids: string[]) {
       const raw = await r.json();
       const c: Record<string, any> = raw && raw.card ? raw.card : raw;
       const pick: Record<string, unknown> = {};
-      for (const k of ["overall", "centering", "corners", "edges", "surface", "frontSlabPictureUrl", "frontLabelPictureUrl", "backLabelPictureUrl", "tag", "status", "authenticationStatus"])
+      for (const k of ["overall", "centering", "corners", "edges", "surface", "frontSlabPictureUrl", "frontLabelPictureUrl", "backLabelPictureUrl", "status", "authenticationStatus"])
         if (c[k] !== undefined) pick[k] = c[k];
+      // the card's tag: admin writes it as "tag"; read it back however the card record carries it (no tag = null)
+      const tagName = (t: any) => (typeof t === "string" ? t : t?.name ?? t?.tag ?? null);
+      const tg = "tag" in c ? c.tag : Array.isArray(c.tags) ? c.tags.map(tagName).find(Boolean) ?? null : "cardTag" in c ? c.cardTag : undefined;
+      if (tg !== undefined) pick.tag = tg && typeof tg === "object" ? tagName(tg) : tg || null;
       pick.archivedAt = c.archivedAt ?? null;
       pick.rescanRequestedAt = c.rescanRequestedAt ?? null;
       // the box admin still has the card in (its Archive Set asks "Has it been removed from the box?")
