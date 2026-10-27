@@ -97,7 +97,8 @@ type TsKey = keyof typeof TS;
 const isTs = (f: string): f is TsKey => f in TS;
 type ArchivePrev = { at: unknown; isInMarketplace: unknown; status: unknown; archivedAt?: unknown };
 const asCard = (b: Record<string, unknown> | null) => (b && typeof b === "object" && "card" in b ? (b as { card: Record<string, unknown> }).card : b) as Record<string, unknown> | null;
-async function tsWrite(session: AdminSession, k: TsKey, itemId: string, to: string, note: string, startedAt: string): Promise<ArchivePrev> {
+const TS_STATUS: Record<TsKey, string> = { archive: "archived", rescan: "pending_rescan" };
+async function tsWrite(session: AdminSession, k: TsKey, itemId: string, to: string, note: string, startedAt: string, statusBack?: string | null): Promise<ArchivePrev> {
   const t = TS[k], vars = { id: itemId };
   const now = asCard(await call(session, { method: "GET", path: "/cards/{id}" }, vars));
   if (!now) throw new Error("couldn't read the card from admin");
@@ -108,10 +109,16 @@ async function tsWrite(session: AdminSession, k: TsKey, itemId: string, to: stri
     const log = await call(session, { method: "POST", path: process.env.ARCHIVE_LOG_PATH || "/v2/operation-logs",
       body: { cardId: itemId, ...want, startedAt, finishedAt: new Date().toISOString(), version: 1 } }, vars);
     if (!log?.id || log.kind !== want.kind) throw new Error(`operation log not saved (admin replied ${JSON.stringify(log).slice(0, 160)}). Nothing was changed.`);
-  } else if (!prev.at) throw new Error(`isn't ${t.what} in admin`);
-  const card = asCard(await call(session, { method: "PATCH", path: "/cards/{id}", body: to ? { [t.field]: to, ...t.setExtra } : { [t.field]: null } }, vars));
+  } else if (!prev.at && prev.status !== TS_STATUS[k]) throw new Error(`isn't ${t.what} in admin`);
+  let card = asCard(await call(session, { method: "PATCH", path: "/cards/{id}", body: to ? { [t.field]: to, ...t.setExtra } : { [t.field]: null } }, vars));
   if (!card || !(t.field in card)) throw new Error(`admin's reply has no ${t.field}, so it's unclear the change saved`);
   if (!!card[t.field] !== !!to) throw new Error(`admin kept ${t.field} ${card[t.field] ? `"${String(card[t.field])}"` : "empty"} (wanted ${to ? "set" : "empty"})`);
+  // Unset: clearing the date can leave the card's status at "archived" / "pending_rescan"; move it to the status picked
+  if (!to && card.status === TS_STATUS[k]) {
+    if (!statusBack) throw new Error(`${t.field} cleared, but admin still shows status "${TS_STATUS[k]}". Pick a status to go back to and run Remove again.`);
+    card = asCard(await call(session, { method: "PATCH", path: "/cards/{id}", body: { status: statusBack } }, vars));
+    if (card?.status !== undefined && card.status !== statusBack) throw new Error(`admin kept status "${String(card.status)}" (wanted "${statusBack}")`);
+  }
   return prev;
 }
 /** Undo: put the date, isInMarketplace (Archive) and status back the way the card had them. */
@@ -124,7 +131,8 @@ async function tsRestore(session: AdminSession, k: TsKey, itemId: string, prev: 
   if (card && prev.status && card.status !== prev.status) await call(session, { method: "PATCH", path: "/cards/{id}", body: { status: prev.status } }, vars);
 }
 const tsAt = (c: ArchivedCard, k: TsKey) => (k === "archive" ? c.archived_at : c.rescan_at) ?? null;
-const cur = (c: ArchivedCard, field: "auth" | "status" | TsKey) => (field === "auth" ? c.auth_status : field === "archive" ? (c.archived_at ? "archived" : null) : field === "rescan" ? (c.rescan_at ? "pending_rescan" : null) : c.status) ?? null;
+// Archive / rescan count as on when admin has the date OR the card's status still says so (e.g. date cleared in admin)
+const cur = (c: ArchivedCard, field: "auth" | "status" | TsKey) => (field === "auth" ? c.auth_status : field === "archive" ? (c.archived_at || c.status === "archived" ? "archived" : null) : field === "rescan" ? (c.rescan_at || c.status === "pending_rescan" ? "pending_rescan" : null) : c.status) ?? null;
 const newId = () => "s_" + randomBytes(5).toString("hex");
 
 /** The value a card had before the last time this status was applied from TAG-BOT (for Remove). */
@@ -155,7 +163,7 @@ async function liveList(view: string, ids: string[], asAdmin?: string) {
 }
 
 export async function runArchivedStatus(input: {
-  view: unknown; text: string; key: string; op: string; note?: string; notes?: Record<string, string>; item_ids: string[]; dry_run?: boolean; user: string; as_admin_user_id?: string; confirm_emailed?: boolean; confirm_unboxed?: boolean;
+  view: unknown; text: string; key: string; op: string; note?: string; notes?: Record<string, string>; item_ids: string[]; dry_run?: boolean; user: string; as_admin_user_id?: string; confirm_emailed?: boolean; confirm_unboxed?: boolean; restore_status?: string;
 }) {
   const key = input.key as StatusKey, act = STATUS_ACTIONS[key];
   if (!act) throw new Error(`Unknown status action "${input.key}".`);
@@ -179,6 +187,9 @@ export async function runArchivedStatus(input: {
   // look old there. Read each card's current status / authentication straight from admin before deciding what to write.
   if (!live) {
     const now = await liveList(String(input.view), wanted, input.as_admin_user_id).catch(() => null);
+    // never decide from Metabase alone: a card admin didn't return is reported, not guessed
+    const unread = now ? fresh.rows.filter((r) => wanted.includes(r.item_id) && !now.rows.some((x) => x.item_id === r.item_id)) : [];
+    if (now && unread.length) throw new Error(`Couldn't read ${unread.slice(0, 5).map((r) => `8AC ${r.ac || r.item_id}`).join(", ")}${unread.length > 5 ? "…" : ""} from admin, so ${unread.length === 1 ? "its" : "their"} current status is unknown. Nothing was changed. Try again.`);
     if (now) {
       const cur = new Map(now.rows.map((r) => [r.item_id, r]));
       for (const r of fresh.rows) { const c = cur.get(r.item_id); if (c) { r.status = c.status ?? r.status; r.auth_status = c.auth_status; r.archived_at = c.archived_at; r.rescan_at = c.rescan_at; r.in_box = c.in_box; } }
@@ -215,7 +226,7 @@ export async function runArchivedStatus(input: {
     if (!input.confirm_emailed) throw new Error("Confirm the customer has been emailed before archiving.");
     if (boxed.length && !input.confirm_unboxed) throw new Error(`${boxed.map((x) => `8AC ${x.c.ac || x.c.item_id} is still in box ${x.c.in_box}`).join(", ")} in admin. Confirm it's been removed from the box.`);
   }
-  if (!todo.length) throw new Error(noTarget.length ? `Nothing to go back to for ${noTarget.join(", ")}: set remove_status_to in ARCHIVE_STATUS_WRITE.` : op === "apply" ? `All selected cards are already ${act.value} in admin. Click ↻ Refresh from admin to see their current status.` : `None of the selected cards are ${act.value} in admin. Click ↻ Refresh from admin to see their current status.`);
+  if (!todo.length) throw new Error(noTarget.length ? `Nothing to go back to for ${noTarget.join(", ")}: set remove_status_to in ARCHIVE_STATUS_WRITE.` : op === "apply" ? `All selected cards are already ${act.value} in admin. Click ↻ Refresh from admin to see their current status.` : `None of the selected cards are ${act.value} in admin (${cards.slice(0, 3).map((c) => `8AC ${c.ac || c.item_id}: admin shows ${act.field === "auth" ? "authentication" : ts ? (ts === "archive" ? "Archived At" : "Rescan Requested At") : "status"} ${ts ? (tsAt(c, ts) ? String(tsAt(c, ts)) : "empty") : `"${cur(c, act.field) ?? "none"}"`}`).join("; ")}). Click ↻ Refresh from admin to see their current status.`);
 
   const dry = config.dryRun() || input.dry_run === true;
   const id = newId();
@@ -250,8 +261,11 @@ export async function runArchivedStatus(input: {
         try {
           if (ts) {
             // the note goes on admin's own log entry; previous values are kept as JSON for undo
-            const prev = await tsWrite(session, ts, x.c.item_id, x.to, op === "apply" ? noteFor(x.c) : "", startedAt);
-            await q(`UPDATE tag_run_items SET previous_tag=$3 WHERE run_id=$1 AND item_id=$2`, [id, x.c.item_id, JSON.stringify(prev)]);
+            // status to go back to on Unset: the one picked on the page, else the one TAG-BOT saved when it set the date
+            const saved = op === "remove" ? (() => { try { return (JSON.parse(prev.get(x.c.item_id) || "{}") as ArchivePrev).status as string | null; } catch { return null; } })() : null;
+            const back = input.restore_status?.trim() || (saved && saved !== TS_STATUS[ts] ? saved : null);
+            const prevVals = await tsWrite(session, ts, x.c.item_id, x.to, op === "apply" ? noteFor(x.c) : "", startedAt, back);
+            await q(`UPDATE tag_run_items SET previous_tag=$3 WHERE run_id=$1 AND item_id=$2`, [id, x.c.item_id, JSON.stringify(prevVals)]);
           } else {
           const card = asCard(await call(session, writeCall as Call, vars));
           // Not accepted: make sure admin saved it (the card comes back from the PATCH)

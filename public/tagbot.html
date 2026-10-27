@@ -967,7 +967,7 @@ async function demoApi(path,body){
     if((k==="pending_rescan"||k==="archive")&&body.op==="apply"&&(body.item_ids||[]).some(id=>!String((body.notes||{})[id]||body.note||"").trim())) throw new Error((k==="archive"?"Archive":"Pending rescan")+" needs a note.");
     const list=DEMO_DB[body.view]||Object.values(DEMO_DB).flat(), changes=[];
     for(const c of list) if((body.item_ids||[]).includes(c.item_id)){
-      if(TSK[k]){ const at=a[0]; if(body.op==="apply"&&!c[at]) changes.push({item_id:c.item_id,from:null,to:new Date().toISOString()}); if(body.op==="remove"&&c[at]) changes.push({item_id:c.item_id,from:c[at],to:null}); continue; }
+      if(TSK[k]){ const at=a[0]; if(body.op==="apply"&&!c[at]) changes.push({item_id:c.item_id,from:null,to:new Date().toISOString()}); const busy=k==="archive"?"archived":"pending_rescan"; if(body.op==="remove"&&(c[at]||c.status===busy)){ changes.push({item_id:c.item_id,from:c[at]||null,to:null}); if(!dry&&c.status===busy&&body.restore_status) c.status=body.restore_status; } continue; }
       const now=c[a[0]];
       if(body.op==="apply"&&now!==a[1]){ changes.push({item_id:c.item_id,from:now,to:a[1]}); }
       if(body.op==="remove"&&now===a[1]){ const back=a[0]==="auth_status"?"none":((c._was||{})[k]??"pending_review"); changes.push({item_id:c.item_id,from:now,to:back}); }
@@ -1038,11 +1038,13 @@ async function find(text){
   if(S.kind==="arena"&&res.card_id){ const b=document.querySelector("#source b"); if(b) b.textContent=`Live · Metabase ${res.card_id}${res.check_card_id?` + Overall Check ${res.check_card_id}`:""}, fresh every search`;
     if(Number(res.card_id)!==45739) $("#srcMsg").insertAdjacentHTML("afterbegin",`<div class="warn-txt small">Arena Club is reading question ${esc(String(res.card_id))}, not 45739 — ARENA_METABASE_CARD_ID is set in Vercel. Delete it (or set it to 45739) and redeploy.</div>`); }
   if(S.kind==="arena") refreshLive();
+  // Metabase lags admin: read status, tag and dates straight from admin right after the search (lists up to 300 cards)
+  if((ARCHK(S.kind)||S.kind==="arena")&&S.matched.length&&S.matched.length<=300&&!DEMO) refreshArchived();
 }
 // Archived: change status — Not accepted / Pending rescan / Archive, apply or remove
 const SACTS={not_accepted:{label:"Not accepted",field:"auth",value:"not_accepted",note:false},pending_rescan:{label:"Pending rescan",field:"rescan",value:"pending_rescan",note:true},archive:{label:"Archive",field:"archive",value:"archived",note:true}};
-// current value of a status action's field on a card (Archive = admin's "Archived At": set or not)
-const sval=(r,field)=>field==="auth"?r.auth_status:field==="archive"?(r.archived_at?"archived":null):field==="rescan"?(r.rescan_at?"pending_rescan":null):r.status;
+// Archive / rescan count as on when admin has the date OR the card's status still says so (e.g. date cleared in admin)
+const sval=(r,field)=>field==="auth"?r.auth_status:field==="archive"?(r.archived_at||r.status==="archived"?"archived":null):field==="rescan"?(r.rescan_at||r.status==="pending_rescan"?"pending_rescan":null):r.status;
 const sprop=field=>field==="auth"?"auth_status":field==="archive"?"archived_at":field==="rescan"?"rescan_at":"status";
 // Archive and Pending rescan are admin's date buttons (Archived At / Rescan Requested At → Set / Unset)
 const TSK={archive:{at:"archived_at",live:"archivedAt",what:"archived",field:"Archived At",title:"Archive"},pending_rescan:{at:"rescan_at",live:"rescanRequestedAt",what:"marked for rescan",field:"Rescan Requested At",title:"Rescan"}};
@@ -1056,6 +1058,10 @@ function statusActions(locked){
     ${Object.entries(SACTS).filter(([k])=>S.kind!=="cards"||k==="archive").map(([k,v])=>`<span class="sagrp"><b class="sa-${k}">${v.label}</b>${btn(k,"apply")}${btn(k,"remove")}</span>`).join("")}
     ${a?`<button type="button" class="btn link" id="saCancel" ${locked?"disabled":""}>Back to tagging</button>`:""}</div>
     ${a&&TSK[a.key]&&a.op==="apply"?archivePanel(locked,a.key):""}
+    ${a&&TSK[a.key]&&a.op==="remove"?(()=>{ const busy=a.key==="archive"?"archived":"pending_rescan";
+      const opts=[...new Set([...S.matched.map(r=>r.status).filter(Boolean),"pending_rejection","pending_release","pending_slabbing","pending_rescan"])].filter(x=>x!==busy).sort();
+      return `<div class="sanote"><label for="saRestore"><b>Status after removing</b> <span class="dim small">used only if admin still shows <b>${busy}</b> once the date is cleared</span></label>
+      <select id="saRestore" ${locked?"disabled":""}><option value="">The status TAG-BOT saved when it set this (if any)</option>${opts.map(o=>`<option value="${esc(o)}"${S.restore===o?" selected":""}>${esc(o)}</option>`).join("")}</select></div>`; })():""}
     ${a&&SACTS[a.key].note&&a.op==="apply"&&!TSK[a.key]?`<div class="sanote"><label for="saNote"><b>Note</b> <span class="dim small">(required for ${SACTS[a.key].label.toLowerCase()}, saved to the operation log)</span></label><textarea id="saNote" rows="2" maxlength="500" placeholder="${a.key==="archive"?"e.g. $99 BS Penmark, archive":"e.g. FS hair, rescan front"}" ${locked?"disabled":""}>${esc(S.snote||"")}</textarea></div>`:""}`;
 }
 // Archive note panel: one row of pills per selected card (each starts from that card's archive log),
@@ -1092,12 +1098,18 @@ function saTargets(){ // cards this change would touch
   const hit=sel.filter(r=>a.op==="apply"?f(r)!==v.value:f(r)===v.value);
   return {sel,hit,skip:sel.length-hit.length};
 }
+// Read Archived At / Rescan Requested At / box for the selected cards straight from admin (Metabase lags)
+async function liveDates(sel){
+  const ids=sel.map(r=>r.item_id).filter(id=>/^[0-9a-f-]{36}$/i.test(id)); if(!ids.length) return;
+  const live=await api("live",{ids});
+  for(const r of sel){ const d=live[r.item_id]; if(d){ r.archived_at=d.archivedAt||null; r.rescan_at=d.rescanRequestedAt||null; r.in_box=d.boxLabel||null; if(d.status!==undefined) r.status=d.status; if(d.tag!==undefined) r.tag=d.tag||null; } }
+}
 async function statusRun(dry){
   const a=S.sact, v=SACTS[a.key], arc=a.key==="archive", T=TSK[a.key];
   if(T&&NOUN()==="watches"){ $("#barmsg").innerHTML=`<span style="color:var(--warn)">${v.label} on watches isn't set up yet: capture admin's ${T.field} Set on a watch page and send it over.</span>`; return; }
-  // Set: read the cards from admin first (the date and the box they're in; Metabase lags)
-  if(T&&a.op==="apply"){ const sel=saTargets().sel, ids=sel.map(r=>r.item_id).filter(id=>/^[0-9a-f-]{36}$/i.test(id));
-    try{ const live=await api("live",{ids}); for(const r of sel){ const d=live[r.item_id]; if(d){ r.archived_at=d.archivedAt||null; r.rescan_at=d.rescanRequestedAt||null; r.in_box=d.boxLabel||null; } } }
+  // Set and Unset: read the cards from admin first (the date and the box they're in; Metabase lags)
+  if(T){ const sel=saTargets().sel;
+    try{ await liveDates(sel); }
     catch(e){ $("#barmsg").innerHTML=`<span style="color:var(--warn)">Couldn't read the card from admin: ${esc(e.message)}</span>`; return; }
     recompute(false); }
   const {hit,skip}=saTargets();
@@ -1121,11 +1133,13 @@ async function statusRun(dry){
   const confirm_emailed=!!$("#chkEmailed")?.checked, confirm_unboxed=[...document.querySelectorAll("#dlgBody .chkUnboxed")].every(x=>x.checked);
   const cb=$("#confirmBtn"); cb.disabled=true; $("#barmsg").innerHTML=`<span class="spin"></span>${dry?"Dry run":"Writing to admin"}… ${hit.length} cards`;
   let res;
-  try{ res=await api("status",{kind:S.kind,view:S.kind==="arena"?"arena":S.kind==="cards"?"cards":S.view,text:S.text,key:a.key,op:a.op,note,notes,item_ids:hit.map(r=>r.item_id),dry_run:dry,confirm_emailed,confirm_unboxed}); }
-  catch(e){ cb.disabled=false; $("#barmsg").innerHTML=`<span style="color:var(--warn)">${esc(e.message)}</span>`; if(/Refresh from admin/.test(e.message)&&(ARCHK(S.kind)||S.kind==="arena")) refreshArchived().then(()=>{ $("#barmsg").innerHTML=`<span style="color:var(--warn)">${esc(e.message.replace(/ Click ↻ Refresh from admin to see their current status\./,""))} The cards now show their current status from admin.</span>`; }); return; }
+  try{ res=await api("status",{kind:S.kind,view:S.kind==="arena"?"arena":S.kind==="cards"?"cards":S.view,text:S.text,key:a.key,op:a.op,note,notes,item_ids:hit.map(r=>r.item_id),dry_run:dry,confirm_emailed,confirm_unboxed,restore_status:T&&a.op==="remove"?(S.restore||""):undefined}); }
+  catch(e){ cb.disabled=false; $("#barmsg").innerHTML=`<span style="color:var(--warn)">${esc(e.message)}</span>`; if(/Refresh from admin/.test(e.message)&&(ARCHK(S.kind)||S.kind==="arena"||S.kind==="cards")) refreshArchived().then(()=>{ $("#barmsg").innerHTML=`<span style="color:var(--warn)">${esc(e.message.replace(/ Click ↻ Refresh from admin to see their current status\./,""))} The cards now show their current status from admin.</span>`; }); return; }
   const field=sprop(v.field);
   if(!res.dry_run){ const to=new Map((res.changes||[]).map(c=>[c.item_id,c.to])); for(const r of S.matched) if((res.written_ids||[]).includes(r.item_id)){ r[field]=to.get(r.item_id)||null; if(a.op==="apply"&&v.note&&notes[r.item_id]) r.notes=[{side:null,issue:v.label,note:notes[r.item_id],logged_at:new Date().toISOString(),note_type:"Note"},...(r.notes||[])]; } }
   const n=res.dry_run?(res.changes||[]).length:(res.written_ids||[]).length;
+  // Unset: the card leaves "archived" / "pending_rescan" for the status picked (admin confirmed it in the reply)
+  if(T&&!res.dry_run&&a.op==="remove"){ const busy=a.key==="archive"?"archived":"pending_rescan"; for(const r of S.matched) if((res.written_ids||[]).includes(r.item_id)&&r.status===busy) r.status=S.restore||r.status; }
   recompute(false);
   const fails=res.failed?` <span style="color:var(--warn)">${res.failed} failed — ${esc(String((res.failures||[])[0]?.error||"").slice(0,160))}</span>`:"";
   $("#barmsg").innerHTML=res.dry_run?`<b>Dry run done.</b> ${n} card${n===1?"":"s"} would ${a.op==="apply"?`be set to ${esc(v.value)}`:`have ${esc(v.value)} removed`}. Nothing was written.`
@@ -1315,7 +1329,7 @@ function recheck(c){
 // Arena Club: grades straight from admin (Metabase reads a copy that updates on a delay)
 // Archived: status, auth status, tag and photo straight from admin (Metabase reads a copy that updates on a delay)
 async function refreshArchived(){
-  if(!S||!(ARCHK(S.kind)||S.kind==="arena")) return;
+  if(!S||!(ARCHK(S.kind)||S.kind==="arena"||S.kind==="cards")) return;
   const mine=S, ids=S.matched.map(r=>r.item_id).filter(id=>/^[0-9a-f-]{36}$/i.test(id));
   let live={}, err="";
   try{ live=await api("live",{ids}); }catch(e){ err=e.message; }
@@ -1778,7 +1792,7 @@ $("#info").addEventListener("close",()=>{WI=null});
 function renderBar(n,replacing){
   const bar=$("#bar"); bar.hidden=false;
   const cb=$("#confirmBtn"), msg=$("#barmsg");
-  if(S&&(ARCHK(S.kind)||S.kind==="arena")&&S.sact&&S.phase==="review"){
+  if(S&&(ARCHK(S.kind)||S.kind==="arena"||S.kind==="cards")&&S.sact&&S.phase==="review"){
     const a=S.sact, v=SACTS[a.key], {hit,skip}=saTargets(), needNote=a.op==="apply"&&v.note&&hit.some(r=>!cardNote(r,a.key,S.snote));
     cb.hidden=false; cb.disabled=!hit.length||needNote; cb.className="btn big "+(a.op==="apply"?"primary":"danger");
     cb.textContent=`${a.op==="apply"?"Set":"Remove"} ${v.value} (${hit.length})`;
@@ -1816,7 +1830,9 @@ function bindSummary(){
   const lb=$("#liveBtn"); if(lb) lb.onclick=async()=>{ lb.disabled=true; lb.textContent="Refreshing…"; await refreshLive(); };
   const alb=$("#archLiveBtn"); if(alb) alb.onclick=async()=>{ alb.disabled=true; alb.textContent="Refreshing…"; await refreshArchived(); };
   const o75=$("#only75"); if(o75) o75.onclick=()=>{ S.only75=!S.only75; recompute(true); };
-  document.querySelectorAll(".sabtn").forEach(b=>b.onclick=()=>{ const k=b.dataset.sk, op=b.dataset.sop; S.sact=(S.sact&&S.sact.key===k&&S.sact.op===op)?null:{key:k,op}; S.npick={}; render(); const t=$("#saNote"); if(t) t.focus(); });
+  document.querySelectorAll(".sabtn").forEach(b=>b.onclick=()=>{ const k=b.dataset.sk, op=b.dataset.sop; S.sact=(S.sact&&S.sact.key===k&&S.sact.op===op)?null:{key:k,op}; S.npick={}; render();
+    if(S.sact&&TSK[k]){ const mine=S; liveDates(saTargets().sel).then(()=>{ if(S===mine&&S.sact){ recompute(false); render(); } }).catch(()=>{}); } const t=$("#saNote"); if(t) t.focus(); });
+  const rs=$("#saRestore"); if(rs) rs.onchange=()=>{ S.restore=rs.value; };
   const sc=$("#saCancel"); if(sc) sc.onclick=()=>{ S.sact=null; render(); };
   document.querySelectorAll(".npill").forEach(b=>b.onclick=()=>{ const id=b.dataset.nid, g=b.dataset.ng, v=b.dataset.nv, sel=saTargets().sel; S.npick=S.npick||{};
     const set=(r,val)=>{ (S.npick[r.item_id]=S.npick[r.item_id]||{})[g]=val; };

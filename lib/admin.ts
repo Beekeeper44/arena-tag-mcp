@@ -363,6 +363,8 @@ export async function liveCards(session: AdminSession, ids: string[]) {
       out[id] = pick;
     } catch { /* leave this card as Metabase had it */ }
   };
-  for (let i = 0; i < ids.length; i += 8) await Promise.all(ids.slice(i, i + 8).map(one));
+  // 16 reads in flight at once; a slow card no longer holds up the next batch
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.min(16, ids.length) }, async () => { while (next < ids.length) await one(ids[next++]); }));
   return out;
 }
