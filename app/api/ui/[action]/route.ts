@@ -202,6 +202,7 @@ export async function POST(req: Request, ctx: Ctx) {
           item_ids: Array.isArray(body.item_ids) ? (body.item_ids as string[]) : [], dry_run: body.dry_run === true, user: u.name, as_admin_user_id: adminLoginFor(u),
           confirm_emailed: body.confirm_emailed === true, confirm_unboxed: body.confirm_unboxed === true,
           restore_status: typeof body.restore_status === "string" ? body.restore_status.slice(0, 60) : undefined,
+          also_not_accepted: body.also_not_accepted === true,
         }));
       case "status-undo":
         return json(await undoArchivedStatus({ run_id: str("run_id"), user: u.name, as_admin_user_id: adminLoginFor(u) }));

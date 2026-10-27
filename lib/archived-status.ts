@@ -95,16 +95,24 @@ const TS = {
 };
 type TsKey = keyof typeof TS;
 const isTs = (f: string): f is TsKey => f in TS;
-type ArchivePrev = { at: unknown; isInMarketplace: unknown; status: unknown; archivedAt?: unknown };
+type ArchivePrev = { at: unknown; isInMarketplace: unknown; status: unknown; archivedAt?: unknown; auth?: unknown; authChanged?: boolean };
 const asCard = (b: Record<string, unknown> | null) => (b && typeof b === "object" && "card" in b ? (b as { card: Record<string, unknown> }).card : b) as Record<string, unknown> | null;
 const TS_STATUS: Record<TsKey, string> = { archive: "archived", rescan: "pending_rescan" };
-async function tsWrite(session: AdminSession, k: TsKey, itemId: string, to: string, note: string, startedAt: string, statusBack?: string | null): Promise<ArchivePrev> {
+async function tsWrite(session: AdminSession, k: TsKey, itemId: string, to: string, note: string, startedAt: string, statusBack?: string | null, alsoNotAccepted = false): Promise<ArchivePrev> {
   const t = TS[k], vars = { id: itemId };
   const now = asCard(await call(session, { method: "GET", path: "/cards/{id}" }, vars));
   if (!now) throw new Error("couldn't read the card from admin");
-  const prev: ArchivePrev = { at: now[t.field] ?? null, isInMarketplace: now.isInMarketplace ?? null, status: now.status ?? null };
+  const prev: ArchivePrev = { at: now[t.field] ?? null, isInMarketplace: now.isInMarketplace ?? null, status: now.status ?? null, auth: now.authenticationStatus ?? null };
   if (to) {
     if (prev.at) throw new Error(`already ${t.what} in admin (${String(prev.at)})`);
+    // Archive + Not accepted in one run: authentication first (admin's own order), skipped if it's already not_accepted
+    if (alsoNotAccepted && prev.auth !== "not_accepted") {
+      const authCall = writeCfg()?.auth;
+      if (!authCall) throw new Error("Not accepted isn't set up");
+      const a = asCard(await call(session, authCall, { id: itemId, value: "not_accepted", note: "", user: "", ac: "", order: "" }));
+      if (a?.authenticationStatus !== undefined && a.authenticationStatus !== "not_accepted") throw new Error(`admin kept authenticationStatus "${String(a.authenticationStatus)}" (wanted "not_accepted"). Nothing was archived.`);
+      prev.authChanged = true;
+    }
     const want = t.log(note);
     const log = await call(session, { method: "POST", path: process.env.ARCHIVE_LOG_PATH || "/v2/operation-logs",
       body: { cardId: itemId, ...want, startedAt, finishedAt: new Date().toISOString(), version: 1 } }, vars);
@@ -126,6 +134,7 @@ async function tsRestore(session: AdminSession, k: TsKey, itemId: string, prev: 
   const t = TS[k], vars = { id: itemId };
   const body: Record<string, unknown> = { [t.field]: (prev.at ?? prev.archivedAt) ?? null }; // archivedAt: runs saved before rescan existed
   if ("isInMarketplace" in t.setExtra && typeof prev.isInMarketplace === "boolean") body.isInMarketplace = prev.isInMarketplace;
+  if (prev.authChanged) body.authenticationStatus = prev.auth ?? "none"; // set by "Also set Not accepted"
   const card = asCard(await call(session, { method: "PATCH", path: "/cards/{id}", body }, vars));
   // Set can move the card's status (e.g. "archived"); if clearing the date leaves it there, put the old status back
   if (card && prev.status && card.status !== prev.status) await call(session, { method: "PATCH", path: "/cards/{id}", body: { status: prev.status } }, vars);
@@ -163,7 +172,7 @@ async function liveList(view: string, ids: string[], asAdmin?: string) {
 }
 
 export async function runArchivedStatus(input: {
-  view: unknown; text: string; key: string; op: string; note?: string; notes?: Record<string, string>; item_ids: string[]; dry_run?: boolean; user: string; as_admin_user_id?: string; confirm_emailed?: boolean; confirm_unboxed?: boolean; restore_status?: string;
+  view: unknown; text: string; key: string; op: string; note?: string; notes?: Record<string, string>; item_ids: string[]; dry_run?: boolean; user: string; as_admin_user_id?: string; confirm_emailed?: boolean; confirm_unboxed?: boolean; restore_status?: string; also_not_accepted?: boolean;
 }) {
   const key = input.key as StatusKey, act = STATUS_ACTIONS[key];
   if (!act) throw new Error(`Unknown status action "${input.key}".`);
@@ -233,7 +242,7 @@ export async function runArchivedStatus(input: {
   await q(
     `INSERT INTO tag_runs (id, status, action, tag, mode, filters, post_filters, requested_by, preview_count, staged_by, staged_at, staged_count, approved_by, live_at, dry_run, expires_at, kind)
      VALUES ($1,'executing',$2,$3,'overwrite',$4,'{}',$5,$6,$5,now(),$6,$5,now(),$7,now()+interval '1 hour','status')`,
-    [id, `${key}:${op}`, op === "apply" ? act.value : null, JSON.stringify({ text: input.text, source: `archived_${fresh.view}`, field: act.field, note, ...(key === "archive" && op === "apply" ? { customer_emailed: true, removed_from_box: boxed.map((x) => ({ item_id: x.c.item_id, box: x.c.in_box })) } : {}) }), input.user, todo.length, dry]
+    [id, `${key}:${op}`, op === "apply" ? act.value : null, JSON.stringify({ text: input.text, source: `archived_${fresh.view}`, field: act.field, note, also_not_accepted: input.also_not_accepted === true, ...(key === "archive" && op === "apply" ? { customer_emailed: true, removed_from_box: boxed.map((x) => ({ item_id: x.c.item_id, box: x.c.in_box })) } : {}) }), input.user, todo.length, dry]
   );
   await q(
     `INSERT INTO tag_run_items (run_id, item_id, previous_tag, new_tag, label, ev)
@@ -264,7 +273,7 @@ export async function runArchivedStatus(input: {
             // status to go back to on Unset: the one picked on the page, else the one TAG-BOT saved when it set the date
             const saved = op === "remove" ? (() => { try { return (JSON.parse(prev.get(x.c.item_id) || "{}") as ArchivePrev).status as string | null; } catch { return null; } })() : null;
             const back = input.restore_status?.trim() || (saved && saved !== TS_STATUS[ts] ? saved : null);
-            const prevVals = await tsWrite(session, ts, x.c.item_id, x.to, op === "apply" ? noteFor(x.c) : "", startedAt, back);
+            const prevVals = await tsWrite(session, ts, x.c.item_id, x.to, op === "apply" ? noteFor(x.c) : "", startedAt, back, key === "archive" && op === "apply" && input.also_not_accepted === true);
             await q(`UPDATE tag_run_items SET previous_tag=$3 WHERE run_id=$1 AND item_id=$2`, [id, x.c.item_id, JSON.stringify(prevVals)]);
           } else {
           const card = asCard(await call(session, writeCall as Call, vars));
