@@ -1449,7 +1449,7 @@ function renderInner(){
     </div>
     ${ARCHK(S.kind)||S.kind==="arena"||S.kind==="cards"?`<div class="sactwrap">${statusActions(locked)}</div>`:""}
     ${S.missing&&S.missing.length&&!locked?`<div class="warn"><b>Nothing found for ${esc(S.missing.join(", "))}.</b> ${S.missing.length<[].concat(S.filters.player_name).length?"Showing only the names that matched.":"Nothing else was selected."}</div>`:""}
-    ${replacing&&!locked?`<div class="warn"><b>${replacing} selected ${replacing===1?"card already has":"cards already have"} a different tag.</b> A card holds one tag, so it will be replaced. Tick "Skip cards that already have a tag" or deselect them to keep it.</div>`:""}
+    ${replacing&&!locked&&!S.sact?`<div class="warn"><b>${replacing} selected ${replacing===1?"card already has":"cards already have"} a different tag.</b> A card holds one tag, so it will be replaced. Tick "Skip cards that already have a tag" or deselect them to keep it.</div>`:""}
   </div>`;
   const showRows=(S.phase==="done"&&!S.showAll)?S.done:S.rows;
   const LIMIT=S.limit||240;
@@ -1884,7 +1884,8 @@ function ask({title,body,yes,danger=false,word=null}){
 const tagCounts=rows=>{const m=new Map();rows.forEach(r=>{const k=r.tag||"(no tag)";m.set(k,(m.get(k)||0)+1)});return `<ul class="taglist">${[...m].sort((a,b)=>b[1]-a[1]).map(([t,n])=>`<li><span>${esc(t)}</span><span>${n}</span></li>`).join("")}</ul>`};
 
 $("#confirmBtn").onclick=async()=>{
-  if(S&&(ARCHK(S.kind)||S.kind==="arena")&&S.sact) return statusRun($("#dry").checked);
+  // a status change (Archive, Not accepted, rescan) never touches tags; Cards tile included
+  if(S&&(ARCHK(S.kind)||S.kind==="arena"||S.kind==="cards")&&S.sact) return statusRun($("#dry").checked);
   const sel=S.rows.filter(r=>S.selected.has(r.item_id));
   const dry=$("#dry").checked;
   const dryNote=dry?"<b>Dry run:</b> records what would change without writing to admin.<br><br>":"";
