@@ -1041,7 +1041,7 @@ async function find(text){
     if(Number(res.card_id)!==45739) $("#srcMsg").insertAdjacentHTML("afterbegin",`<div class="warn-txt small">Arena Club is reading question ${esc(String(res.card_id))}, not 45739 — ARENA_METABASE_CARD_ID is set in Vercel. Delete it (or set it to 45739) and redeploy.</div>`); }
   if(S.kind==="arena") refreshLive();
   // Metabase lags admin: read status, tag and dates straight from admin right after the search (lists up to 300 cards)
-  if((ARCHK(S.kind)||S.kind==="arena")&&S.matched.length&&S.matched.length<=300&&!DEMO) refreshArchived();
+  if((ARCHK(S.kind)||S.kind==="arena"||S.kind==="cards"||S.kind==="watches")&&S.matched.length&&S.matched.length<=300&&!DEMO) refreshArchived();
 }
 // Archived: change status — Not accepted / Pending rescan / Archive, apply or remove
 const SACTS={not_accepted:{label:"Not accepted",field:"auth",value:"not_accepted",note:false},pending_rescan:{label:"Pending rescan",field:"rescan",value:"pending_rescan",note:true},archive:{label:"Archive",field:"archive",value:"archived",note:true}};
@@ -1336,10 +1336,11 @@ function recheck(c){
 // Arena Club: grades straight from admin (Metabase reads a copy that updates on a delay)
 // Archived: status, auth status, tag and photo straight from admin (Metabase reads a copy that updates on a delay)
 async function refreshArchived(){
-  if(!S||!(ARCHK(S.kind)||S.kind==="arena"||S.kind==="cards")) return;
+  if(!S||!(ARCHK(S.kind)||S.kind==="arena"||S.kind==="cards"||S.kind==="watches")) return;
   const mine=S, ids=S.matched.map(r=>r.item_id).filter(id=>/^[0-9a-f-]{36}$/i.test(id));
+  const watch=S.kind==="watches"||S.view==="arch_watches", noun=watch?"watches":"cards";
   let live={}, err="";
-  try{ live=await api("live",{ids}); }catch(e){ err=e.message; }
+  try{ live=await api("live",{ids,kind:watch?"watch":"card"}); }catch(e){ err=e.message; }
   if(S!==mine) return;
   let changed=0, seen=0, noTag=0;
   for(const r of mine.matched){ const d=live[r.item_id]; if(!d) continue; seen++; if(d.tag===undefined) noTag++;
@@ -1354,7 +1355,7 @@ async function refreshArchived(){
     if(JSON.stringify([r.status,r.auth_status,r.tag,r.img,r.archived_at,r.rescan_at])!==before) changed++;
   }
   recompute(false);
-  const m=$("#srcMsg"); if(m) m.innerHTML=err?`<span class="warn-txt">Couldn't refresh from admin: ${esc(err)}</span>`:`Refreshed from admin · ${seen} of ${ids.length} cards read · ${changed} changed${noTag?` · <span class="warn-txt">admin's reply had no tag for ${noTag} card${noTag===1?"":"s"}, so ${noTag===1?"its":"their"} tag wasn't updated</span>`:""}`;
+  const m=$("#srcMsg"); if(m) m.innerHTML=err?`<span class="warn-txt">Couldn't refresh from admin: ${esc(err)}</span>`:`Refreshed from admin · ${seen} of ${ids.length} ${noun} read · ${changed} changed${noTag?` · <span class="warn-txt">admin's reply had no tag for ${noTag} card${noTag===1?"":"s"}, so ${noTag===1?"its":"their"} tag wasn't updated</span>`:""}`;
 }
 async function refreshLive(){
   const mine=S; if(!mine||!mine.matched.length) return;
@@ -1443,7 +1444,7 @@ function renderInner(){
           <option value="evlow"${S.sort==="evlow"?" selected":""}>EV: low → high</option></select>
         ${S.kind==="arena"?`
         <button type="button" class="btn only75${S.only75?" on":""}" id="only75" aria-pressed="${!!S.only75}">${S.only75?"✓ ":""}Only ≤ 7.5 / auth</button>
-        <button type="button" class="btn" id="liveBtn" title="Re-read every card's grades, slab and tag straight from admin (Metabase updates on a delay)">↻ Refresh from admin</button>`:ARCHK(S.kind)?`
+        <button type="button" class="btn" id="liveBtn" title="Re-read every card's grades, slab and tag straight from admin (Metabase updates on a delay)">↻ Refresh from admin</button>`:ARCHK(S.kind)||S.kind==="cards"||S.kind==="watches"?`
         <button type="button" class="btn" id="archLiveBtn" title="Re-read every card's status, authentication status, tag and photo straight from admin (Metabase updates on a delay)">↻ Refresh from admin</button>`:""}</div>
       ${locked?"":`<div class="selbar"><button class="btn link" type="button" id="all">Select all</button><button class="btn link" type="button" id="none">Clear</button></div>`}
     </div>

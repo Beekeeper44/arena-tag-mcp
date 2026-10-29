@@ -339,6 +339,31 @@ export async function changeGradesLikeReview(session: AdminSession, itemId: stri
 }
 
 // ---------- Live grades straight from admin (Metabase reads a delayed copy) ----------
+/** Watches: tag and status straight from admin, read from the same path watch tags are written to (WATCH_TAG_PATH). */
+export async function liveWatches(session: AdminSession, ids: string[]) {
+  const path = config.watchTagPath();
+  if (!path) throw new Error("Refresh from admin for watches needs WATCH_TAG_PATH set in Vercel (the admin path watch tags are saved to, e.g. /items/{id}).");
+  const out: Record<string, Record<string, unknown>> = {};
+  const tagName = (t: any) => (typeof t === "string" ? t : t?.name ?? t?.tag ?? null);
+  const one = async (id: string) => {
+    if (!/^[0-9a-f-]{36}$/i.test(id)) return;
+    try {
+      const r = await fetch(`${config.adminApiUrl()}${path.replace("{id}", id)}`, { headers: headers(session.accessToken) });
+      if (!r.ok) return;
+      const raw = await r.json();
+      const w: Record<string, any> = raw?.item ?? raw?.watch ?? raw;
+      const pick: Record<string, unknown> = {};
+      if (w.status !== undefined) pick.status = w.status;
+      const tg = "tag" in w ? w.tag : Array.isArray(w.tags) ? w.tags.map(tagName).find(Boolean) ?? null : undefined;
+      if (tg !== undefined) pick.tag = tg && typeof tg === "object" ? tagName(tg) : tg || null;
+      out[id] = pick;
+    } catch { /* leave this watch as Metabase had it */ }
+  };
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.min(16, ids.length) }, async () => { while (next < ids.length) await one(ids[next++]); }));
+  return out;
+}
+
 export async function liveCards(session: AdminSession, ids: string[]) {
   const out: Record<string, Record<string, unknown>> = {};
   const one = async (id: string) => {

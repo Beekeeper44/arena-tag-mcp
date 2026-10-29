@@ -81,7 +81,7 @@ Everyone signed in has full access (search, tag, undo). **admin** also gets the 
 
 The Cards / Watches toggle switches the source. Watches read Metabase question **45046** (`WATCH_METABASE_CARD_ID`). 45046's SQL ends in `LIMIT 5000` (newest first), so TAG-BOT never pulls it unfiltered when it can avoid it: every word typed is sent through 45046's own filters (Tag, Brand, Model; numbers through PO #, Order #, Reference #), which run inside the SQL before the limit, and the results are merged. The request is then matched against the real values in it: brand (and nicknames like AP, Patek, speedy), model, reference number, dial color, year, condition, value range and current tag. Columns are found by name (BRAND, MODEL, REFERENCE, DIAL_COLOR, SERIAL, YEAR, CONDITION, ESTIMATED_VALUE, TAG, any *_PICTURE_URL / IMAGE column, and the item id as ITEM_ID).
 
-Watch tags are written with `PATCH {ADMIN_API_URL}{WATCH_TAG_PATH}` and body `{"tag": ...}`. Until `WATCH_TAG_PATH` is set, watch runs only work as dry runs. Runs record `kind` (card / watch) so undo uses the right path.
+Watch tags are written with `PATCH {ADMIN_API_URL}{WATCH_TAG_PATH}` and body `{"tag": ...}`. Until `WATCH_TAG_PATH` is set, watch runs only work as dry runs. **↻ Refresh from admin** on the Watches tile reads each watch's tag and status with `GET {ADMIN_API_URL}{WATCH_TAG_PATH}`, so it also needs `WATCH_TAG_PATH`. Runs record `kind` (card / watch) so undo uses the right path.
 
 ## Searching by tag
 

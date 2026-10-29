@@ -5,7 +5,7 @@ import { runArchivedStatus, undoArchivedStatus } from "@/lib/archived-status";
 import { type CardFilters, type PostFilters } from "@/lib/metabase";
 import { runSelection, runWatchSelection, runArenaSelection, runArchivedSelection, runOverallUpdate, runGradeUpdate, undoRun, listRuns } from "@/lib/runs";
 import { searchArena } from "@/lib/arena";
-import { openAdminSession, liveCards } from "@/lib/admin";
+import { openAdminSession, liveCards, liveWatches } from "@/lib/admin";
 import { listPrompts, addPrompt, renamePrompt, deletePrompt } from "@/lib/ui";
 import {
   can, type Role, type User, currentUser, sessionCookie, clearCookie, needsSetup, login, setupFirstAdmin, inviteInfo, acceptInvite,
@@ -193,7 +193,7 @@ export async function POST(req: Request, ctx: Ctx) {
         // current grades straight from admin for the cards on screen (Metabase lags behind)
         const ids = (Array.isArray(body.ids) ? (body.ids as string[]) : []).slice(0, 2000);
         const session = await openAdminSession(adminLoginFor(u));
-        try { return json(await liveCards(session, ids)); } finally { await session.revoke(); }
+        try { return json(await (body.kind === "watch" ? liveWatches(session, ids) : liveCards(session, ids))); } finally { await session.revoke(); }
       }
       case "status":
         // Archived tile: Not accepted / Pending rescan / Archive — apply or remove (logged, undoable)
