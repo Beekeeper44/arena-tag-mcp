@@ -317,6 +317,7 @@ h1 span{color:var(--go)}
 .nrow.done{opacity:.6}
 .nrow .npills{display:inline-flex;margin:4px 14px 2px 0}
 .nrowh{font-size:13px}
+.planline{margin:0 0 10px;padding:8px 10px;border:1px solid var(--line);border-radius:8px}
 .alsona{display:flex;gap:8px;align-items:flex-start;margin:10px 0 6px;font-size:14px;cursor:pointer}
 .alsona input{width:18px;height:18px;accent-color:var(--go);flex:none;margin-top:1px}
 .archchk{margin-top:12px;display:grid;gap:8px;padding:10px 12px;border:1px solid var(--line);border-radius:8px}
@@ -1053,34 +1054,39 @@ const TSK={archive:{at:"archived_at",live:"archivedAt",what:"archived",field:"Ar
 const fmtAt=v=>{ if(!v) return ""; const d=new Date(String(v).replace(" ","T")); return isNaN(d)?String(v):d.toLocaleString([],{day:"numeric",month:"short",year:"2-digit",hour:"numeric",minute:"2-digit"}); };
 const arcHtml=r=>r&&r.archived_at?`<span class="ast st-archived">${esc(fmtAt(r.archived_at))}</span>`:"";
 const rscHtml=r=>r&&r.rescan_at?`<span class="ast st-pending_rescan">${esc(fmtAt(r.rescan_at))}</span>`:"";
+// Status changes: pick Apply or Remove in any group (one per group). Confirm runs them in order:
+// Not accepted → Pending rescan → Archive (admin's own order), in one confirm.
+const PLAN_ORDER=["not_accepted","pending_rescan","archive"];
+const planList=()=>S&&S.plan?PLAN_ORDER.filter(k=>S.plan[k]&&SACTS[k]).map(k=>({key:k,op:S.plan[k]})):[];
 function statusActions(locked){
-  const a=S.sact;
-  const btn=(k,op)=>`<button type="button" class="sabtn${a&&a.key===k&&a.op===op?" on":""}${op==="remove"?" rm":""}" data-sk="${k}" data-sop="${op}" ${locked?"disabled":""}>${op==="apply"?"Apply":"Remove"}</button>`;
+  const plan=S.plan||{};
+  const btn=(k,op)=>`<button type="button" class="sabtn${plan[k]===op?" on":""}${op==="remove"?" rm":""}" data-sk="${k}" data-sop="${op}" aria-pressed="${plan[k]===op}" ${locked?"disabled":""}>${op==="apply"?"Apply":"Remove"}</button>`;
+  const list=planList();
   return `<div class="sact" role="group" aria-label="Change status"><span class="dim small">Change status:</span>
     ${Object.entries(SACTS).filter(([k])=>S.kind!=="cards"||k==="archive").map(([k,v])=>`<span class="sagrp"><b class="sa-${k}">${v.label}</b>${btn(k,"apply")}${btn(k,"remove")}</span>`).join("")}
-    ${a?`<button type="button" class="btn link" id="saCancel" ${locked?"disabled":""}>Back to tagging</button>`:""}</div>
-    ${a&&TSK[a.key]&&a.op==="apply"?archivePanel(locked,a.key):""}
-    ${a&&TSK[a.key]&&a.op==="remove"?(()=>{ const busy=a.key==="archive"?"archived":"pending_rescan";
-      const opts=[...new Set([...S.matched.map(r=>r.status).filter(Boolean),"pending_rejection","pending_release","pending_slabbing","pending_rescan"])].filter(x=>x!==busy).sort();
-      return `<div class="sanote"><label for="saRestore"><b>Status after removing</b> <span class="dim small">used only if admin still shows <b>${busy}</b> once the date is cleared</span></label>
-      <select id="saRestore" ${locked?"disabled":""}><option value="">The status TAG-BOT saved when it set this (if any)</option>${opts.map(o=>`<option value="${esc(o)}"${S.restore===o?" selected":""}>${esc(o)}</option>`).join("")}</select></div>`; })():""}
-    ${a&&SACTS[a.key].note&&a.op==="apply"&&!TSK[a.key]?`<div class="sanote"><label for="saNote"><b>Note</b> <span class="dim small">(required for ${SACTS[a.key].label.toLowerCase()}, saved to the operation log)</span></label><textarea id="saNote" rows="2" maxlength="500" placeholder="${a.key==="archive"?"e.g. $99 BS Penmark, archive":"e.g. FS hair, rescan front"}" ${locked?"disabled":""}>${esc(S.snote||"")}</textarea></div>`:""}`;
+    ${list.length?`<button type="button" class="btn link" id="saCancel" ${locked?"disabled":""}>Back to tagging</button>`:""}</div>
+    ${list.map(a=>TSK[a.key]&&a.op==="apply"?archivePanel(locked,a.key):TSK[a.key]&&a.op==="remove"?restorePanel(locked,a.key):"").join("")}`;
+}
+function restorePanel(locked,key){
+  const busy=key==="archive"?"archived":"pending_rescan", cur=(S.rs||{})[key]||"";
+  const opts=[...new Set([...S.matched.map(r=>r.status).filter(Boolean),"pending_rejection","pending_release","pending_slabbing","pending_rescan"])].filter(x=>x!==busy).sort();
+  return `<div class="sanote"><label for="saRestore-${key}"><b>${SACTS[key].label} · status after removing</b> <span class="dim small">used only if admin still shows <b>${busy}</b> once the date is cleared</span></label>
+    <select id="saRestore-${key}" class="saRestore" data-key="${key}" ${locked?"disabled":""}><option value="">The status TAG-BOT saved when it set this (if any)</option>${opts.map(o=>`<option value="${esc(o)}"${cur===o?" selected":""}>${esc(o)}</option>`).join("")}</select></div>`;
 }
 // Archive note panel: one row of pills per selected card (each starts from that card's archive log),
 // plus "Set all" pills on top when more than one card is selected. Nothing is written until Yes, archive.
 function archivePanel(locked,key="archive"){
-  const T=TSK[key], sel=saTargets().sel, many=sel.length>1;
+  const T=TSK[key], sel=S.rows.filter(r=>S.selected.has(r.item_id)), many=sel.length>1, extra=(S.sn||{})[key]||"";
   const opts={vr:["<499","500+"],side:["FS","BS"],type:ISSUE_TYPES.map(([n])=>n)}, lbl={vr:"Value",side:"Side",type:"Issue"};
-  const pill=(id,g,v,on)=>`<button type="button" class="npill${on?" on":""}" data-nid="${esc(id)}" data-ng="${g}" data-nv="${esc(v)}" aria-pressed="${on}" ${locked?"disabled":""}>${esc(v)}</button>`;
+  const pill=(id,g,v,on)=>`<button type="button" class="npill${on?" on":""}" data-key="${key}" data-nid="${esc(id)}" data-ng="${g}" data-nv="${esc(v)}" aria-pressed="${on}" ${locked?"disabled":""}>${esc(v)}</button>`;
   const groups=(id,isOn)=>["vr","side","type"].map(g=>`<div class="npills"><span class="dim small">${lbl[g]}</span>${opts[g].map(v=>pill(id,g,v,isOn(g,v))).join("")}</div>`).join("");
-  const live=sel.filter(r=>!r[T.at]);
-  const head=many?`<div class="nall"><div><b>Set all ${live.length}</b> <span class="dim small">fills every card below; change any card after</span></div>${groups("*",(g,v)=>live.length>0&&live.every(r=>notePick(r)[g]===v))}</div>`:"";
-  const rows=sel.map(r=>{ const p=notePick(r), note=cardNote(r,key,S.snote);
-    return `<div class="nrow${r[T.at]?" done":""}"><div class="nrowh"><span class="dim">8AC ${esc(r.ac||r.ac_number||"")}</span> → <b data-prev="${esc(r.item_id)}">${note?esc(note):'<span style="color:var(--warn)">pick a value, side or issue</span>'}</b>${r[T.at]?` <span style="color:var(--warn)">already ${T.what} in admin (${esc(fmtAt(r[T.at]))}), skipped. Remove first to do it again.</span>`:""}</div>${groups(r.item_id,(g,v)=>p[g]===v)}</div>`; }).join("");
+  const live=sel.filter(r=>sval(r,SACTS[key].field)!==SACTS[key].value);
+  const head=many?`<div class="nall"><div><b>Set all ${live.length}</b> <span class="dim small">fills every card below; change any card after</span></div>${groups("*",(g,v)=>live.length>0&&live.every(r=>notePick(r,key)[g]===v))}</div>`:"";
+  const rows=sel.map(r=>{ const p=notePick(r,key), note=cardNote(r,key,extra), done=sval(r,SACTS[key].field)===SACTS[key].value;
+    return `<div class="nrow${done?" done":""}"><div class="nrowh"><span class="dim">8AC ${esc(r.ac||r.ac_number||"")}</span> → <b data-prev="${key}:${esc(r.item_id)}">${note?esc(note):'<span style="color:var(--warn)">pick a value, side or issue</span>'}</b>${done?` <span style="color:var(--warn)">already ${T.what} in admin${r[T.at]?` (${esc(fmtAt(r[T.at]))})`:""}, skipped. Remove first to do it again.</span>`:""}</div>${groups(r.item_id,(g,v)=>p[g]===v)}</div>`; }).join("");
   return `<div class="sanote"><div><b>${T.title} note${many?"s":""}</b> <span class="dim small">click to pick; each card's note goes to its operation log in admin when you confirm${key==="pending_rescan"?` (as "Manually set rescanRequestedAt <i>note</i>")`:""}</span></div>
     ${head}${sel.length?`<div class="nrows">${rows}</div>`:'<div class="saprev"><span class="dim">Select cards to build their notes.</span></div>'}
-    ${key==="archive"?`<label class="alsona"><input type="checkbox" id="saAlsoNA" ${S.alsoNA?"checked":""} ${locked?"disabled":""}> Also set <b>Not accepted</b> on these cards <span class="dim small">(authentication → not_accepted first, then archive; undo puts both back)</span></label>`:""}
-    <label for="saNote" class="dim small">Add to ${many?"every":"the"} note (optional)</label><textarea id="saNote" rows="2" maxlength="400" placeholder="e.g. slab cracked" ${locked?"disabled":""}>${esc(S.snote||"")}</textarea></div>`;
+    <label for="saNote-${key}" class="dim small">Add to ${many?"every":"the"} ${T.title.toLowerCase()} note (optional)</label><textarea id="saNote-${key}" class="saNote" data-key="${key}" rows="2" maxlength="400" placeholder="e.g. slab cracked" ${locked?"disabled":""}>${esc(extra)}</textarea></div>`;
 }
 // Archive note, built for each card: value range, side, issue type (e.g. "<499 FS Damage"), plus anything typed in the box.
 // Issue type uses the archive rules, checked in this order: the first match wins.
@@ -1088,15 +1094,15 @@ const ISSUE_TYPES=[["Grading Company Issues",/grading compan|grading co\b|do not
 function issueType(issue,note){ const t=`${issue||""} ${note||""}`; for(const [name,re] of ISSUE_TYPES) if(re.test(t)) return name; return issue||""; }
 function valueRange(r){ if(r.value_range&&/^(<\s*499|500\s*\+)$/.test(r.value_range.trim())) return r.value_range.trim(); return r.ev?(r.ev>=500?"500+":"<499"):""; }
 // Archive note pills: value range · side · issue type. Start from the card's archive log, a click overrides (click again to clear).
-function notePick(r){
-  const x=(r.notes||[])[0]||{}, o=(S.npick||{})[r.item_id]||{};
+function notePick(r,key="archive"){
+  const x=(r.notes||[])[0]||{}, o=((S.np||{})[key]||{})[r.item_id]||{};
   const side=(String(x.side||"").toUpperCase().match(/\b(FS|BS)\b/)||[])[1]||"";
   return {vr:o.vr??valueRange(r), side:o.side??side, type:o.type??issueType(x.issue,x.note)};
 }
-function autoNote(r){ const p=notePick(r); return [p.vr,p.side,p.type].filter(Boolean).join(" "); }
-function cardNote(r,key,extra){ const e=(extra||"").trim(); return TSK[key]?[autoNote(r),e].filter(Boolean).join(" · "):e; }
-function saTargets(){ // cards this change would touch
-  const a=S.sact, v=SACTS[a.key], f=r=>sval(r,v.field);
+function autoNote(r,key="archive"){ const p=notePick(r,key); return [p.vr,p.side,p.type].filter(Boolean).join(" "); }
+function cardNote(r,key,extra){ const e=(extra||"").trim(); return TSK[key]?[autoNote(r,key),e].filter(Boolean).join(" · "):e; }
+function saTargets(a=planList()[0]){ // cards this change would touch
+  const v=SACTS[a.key], f=r=>sval(r,v.field);
   const sel=S.rows.filter(r=>S.selected.has(r.item_id));
   const hit=sel.filter(r=>a.op==="apply"?f(r)!==v.value:f(r)===v.value);
   return {sel,hit,skip:sel.length-hit.length};
@@ -1105,55 +1111,83 @@ function saTargets(){ // cards this change would touch
 async function liveDates(sel){
   const ids=sel.map(r=>r.item_id).filter(id=>/^[0-9a-f-]{36}$/i.test(id)); if(!ids.length) return;
   const live=await api("live",{ids});
-  for(const r of sel){ const d=live[r.item_id]; if(d){ r.archived_at=d.archivedAt||null; r.rescan_at=d.rescanRequestedAt||null; r.in_box=d.boxLabel||null; if(d.status!==undefined) r.status=d.status; if(d.tag!==undefined) r.tag=d.tag||null; } }
+  for(const r of sel){ const d=live[r.item_id]; if(d){ r.archived_at=d.archivedAt||null; r.rescan_at=d.rescanRequestedAt||null; r.in_box=d.boxLabel||null; if(d.status!==undefined) r.status=d.status; if(d.authenticationStatus!==undefined) r.auth_status=d.authenticationStatus; if(d.tag!==undefined) r.tag=d.tag||null; } }
 }
-async function statusRun(dry){
-  const a=S.sact, v=SACTS[a.key], arc=a.key==="archive", T=TSK[a.key];
-  if(T&&NOUN()==="watches"){ $("#barmsg").innerHTML=`<span style="color:var(--warn)">${v.label} on watches isn't set up yet: capture admin's ${T.field} Set on a watch page and send it over.</span>`; return; }
-  // Set and Unset: read the cards from admin first (the date and the box they're in; Metabase lags)
-  if(T){ const sel=saTargets().sel;
-    try{ await liveDates(sel); }
-    catch(e){ $("#barmsg").innerHTML=`<span style="color:var(--warn)">Couldn't read the card from admin: ${esc(e.message)}</span>`; return; }
-    recompute(false); }
-  const {hit,skip}=saTargets();
-  if(T&&!hit.length){ $("#barmsg").innerHTML=`<span style="color:var(--warn)">${a.op==="apply"?`The selected cards are already ${T.what} in admin.`:`None of the selected cards are ${T.what} in admin.`}</span>`; return; }
+// One status change, checked and ready to send (no writes). Returns {none:true} when no selected card needs it.
+function statusPrep(a){
+  const v=SACTS[a.key], arc=a.key==="archive", T=TSK[a.key];
+  if(T&&NOUN()==="watches") return {err:`${v.label} on watches isn't set up yet: capture admin's ${T.field} Set on a watch page and send it over.`};
+  const {hit,skip}=saTargets(a);
+  if(!hit.length) return {a,v,none:true,why:`${a.op==="apply"?"already":"not"} ${v.value}`};
   const cap=T?(window.MAX_ARCHIVE||200):(window.MAX_ITEMS||1000);
-  if(hit.length>cap){ $("#barmsg").innerHTML=`<span style="color:var(--warn)">${hit.length.toLocaleString()} cards is over the ${cap.toLocaleString()}-card ${T?v.label.toLowerCase()+" ":""}limit. Deselect some or narrow the search.</span>`; return; }
-  const note=(S.snote||"").trim();
+  if(hit.length>cap) return {err:`${hit.length.toLocaleString()} cards is over the ${cap.toLocaleString()}-card ${T?v.label.toLowerCase()+" ":""}limit. Deselect some or narrow the search.`};
+  const note=((S.sn||{})[a.key]||"").trim();
   const notes=a.op==="apply"&&v.note?Object.fromEntries(hit.map(r=>[r.item_id,cardNote(r,a.key,note)])):{};
   const blank=T&&a.op==="apply"?hit.filter(r=>!notes[r.item_id]):[];
-  if(blank.length){ $("#barmsg").innerHTML=`<span style="color:var(--warn)">Pick a note for ${blank.map(r=>"8AC "+esc(r.ac||r.ac_number||"")).join(", ")}.</span>`; return; }
-  // the two questions admin's Set button asks in pop-ups, as checkboxes that must be ticked
+  if(blank.length) return {err:`Pick a ${v.label.toLowerCase()} note for ${blank.map(r=>"8AC "+esc(r.ac||r.ac_number||"")).join(", ")}.`};
   const boxed=arc&&a.op==="apply"?hit.filter(r=>r.in_box):[];
-  const checks=arc&&a.op==="apply"?`<div class="archchk"><label><input type="checkbox" id="chkEmailed"> I've emailed the customer</label>${boxed.length?`<div class="dim small">Still in a box in admin. Tick each one once it's been pulled:</div>`+boxed.map(r=>`<label><input type="checkbox" class="chkUnboxed"> 8AC ${esc(r.ac||r.ac_number||r.item_id)} has been removed from box <b>${esc(r.in_box)}</b></label>`).join(""):""}</div>`:"";
-  const alsoNA=arc&&a.op==="apply"&&!!S.alsoNA;
-  const what=(alsoNA?"Authentication status becomes <b>not_accepted</b> first (cards already not_accepted are left as they are). Then ":"")+(a.key==="pending_rescan"?(a.op==="apply"?"Rescan Requested At is set to now, same as admin's <b>Set</b> button. Admin logs a note: <i>Manually set rescanRequestedAt</i> plus each card's note.":"Rescan Requested At is cleared, same as admin's <b>Unset</b> button."):arc?(a.op==="apply"?"Archived At is set to now and the card comes off the marketplace, same as admin's <b>Set</b> button. Admin logs it as an archive with each card's note.":"Archived At is cleared, same as admin's <b>Unset</b> button."):a.op==="apply"?`${v.field==="auth"?"Authentication status":"Card status"} becomes <b>${esc(v.value)}</b>.`:`Cards go back to the ${v.field==="auth"?"authentication status <b>none</b>":"status they had before"}.`);
-  const asking=ask({title:`${a.op==="apply"?"Set":"Remove"} ${v.value} on ${hit.length} card${hit.length===1?"":"s"}?`,
-    body:`${dry?"<b>Dry run:</b> records what would change without writing to admin.<br><br>":""}${what}${a.op==="apply"&&v.note?(T?`<br>Each card gets its own note, e.g. <i>${esc(notes[hit[0]?.item_id]||"")}</i>`:`<br>Note: <i>${esc(note)}</i>`):""}${skip?`<br><span class="dim">${skip} selected card${skip===1?" is":"s are"} skipped (${a.op==="apply"?"already":"not"} ${esc(v.value)}).</span>`:""}<br>You can undo this afterward.${checks}`,
-    yes:dry?"Run dry run":a.key==="pending_rescan"?(a.op==="apply"?"Yes, request rescan":"Yes, unset"):arc?(a.op==="apply"?"Yes, archive":"Yes, unset"):a.op==="apply"?`Yes, set ${v.value}`:"Yes, remove it", danger:a.op==="remove"&&!dry});
-  if(checks){ const y=$("#dlgYes"), boxes=[...document.querySelectorAll("#dlgBody .archchk input")]; const upd=()=>{ y.disabled=!boxes.every(x=>x.checked); }; boxes.forEach(x=>x.onchange=upd); upd(); }
-  const ok=await asking;
-  if(!ok) return;
-  const confirm_emailed=!!$("#chkEmailed")?.checked, confirm_unboxed=[...document.querySelectorAll("#dlgBody .chkUnboxed")].every(x=>x.checked);
-  const cb=$("#confirmBtn"); cb.disabled=true; $("#barmsg").innerHTML=`<span class="spin"></span>${dry?"Dry run":"Writing to admin"}… ${hit.length} cards`;
-  let res;
-  try{ res=await api("status",{kind:S.kind,view:S.kind==="arena"?"arena":S.kind==="cards"?"cards":S.view,text:S.text,key:a.key,op:a.op,note,notes,item_ids:hit.map(r=>r.item_id),dry_run:dry,confirm_emailed,confirm_unboxed,restore_status:T&&a.op==="remove"?(S.restore||""):undefined,also_not_accepted:arc&&a.op==="apply"&&!!S.alsoNA}); }
-  catch(e){ cb.disabled=false; $("#barmsg").innerHTML=`<span style="color:var(--warn)">${esc(e.message)}</span>`; if(/Refresh from admin/.test(e.message)&&(ARCHK(S.kind)||S.kind==="arena"||S.kind==="cards")) refreshArchived().then(()=>{ $("#barmsg").innerHTML=`<span style="color:var(--warn)">${esc(e.message.replace(/ Click ↻ Refresh from admin to see their current status\./,""))} The cards now show their current status from admin.</span>`; }); return; }
-  const field=sprop(v.field);
-  if(!res.dry_run){ const to=new Map((res.changes||[]).map(c=>[c.item_id,c.to])); for(const r of S.matched) if((res.written_ids||[]).includes(r.item_id)){ r[field]=to.get(r.item_id)||null; if(a.op==="apply"&&v.note&&notes[r.item_id]) r.notes=[{side:null,issue:v.label,note:notes[r.item_id],logged_at:new Date().toISOString(),note_type:"Note"},...(r.notes||[])]; } }
-  const n=res.dry_run?(res.changes||[]).length:(res.written_ids||[]).length;
-  if(alsoNA&&!res.dry_run) for(const r of S.matched) if((res.written_ids||[]).includes(r.item_id)) r.auth_status="not_accepted";
-  // Unset: the card leaves "archived" / "pending_rescan" for the status picked (admin confirmed it in the reply)
-  if(T&&!res.dry_run&&a.op==="remove"){ const busy=a.key==="archive"?"archived":"pending_rescan"; for(const r of S.matched) if((res.written_ids||[]).includes(r.item_id)&&r.status===busy) r.status=S.restore||r.status; }
+  const what=a.key==="pending_rescan"?(a.op==="apply"?"Rescan Requested At is set to now and admin logs <i>Manually set rescanRequestedAt</i> plus each card's note.":"Rescan Requested At is cleared, same as admin's <b>Unset</b>.")
+    :arc?(a.op==="apply"?"Archived At is set to now, the card comes off the marketplace, and admin logs it as an archive with each card's note.":"Archived At is cleared, same as admin's <b>Unset</b>.")
+    :a.op==="apply"?`Authentication status becomes <b>${esc(v.value)}</b>.`:`Authentication status goes back to <b>none</b>.`;
+  return {a,v,T,arc,hit,skip,note,notes,boxed,what};
+}
+// Send one prepared change; returns the API result
+async function statusExec(p,dry,conf){
+  const {a,v,T}=p;
+  const res=await api("status",{kind:S.kind,view:S.kind==="arena"?"arena":S.kind==="cards"?"cards":S.view,text:S.text,key:a.key,op:a.op,note:p.note,notes:p.notes,item_ids:p.hit.map(r=>r.item_id),dry_run:dry,
+    confirm_emailed:conf.emailed,confirm_unboxed:conf.unboxed,restore_status:T&&a.op==="remove"?((S.rs||{})[a.key]||""):undefined});
+  if(!res.dry_run){
+    const field=sprop(v.field), to=new Map((res.changes||[]).map(c=>[c.item_id,c.to])), w=new Set(res.written_ids||[]);
+    for(const r of S.matched) if(w.has(r.item_id)){ r[field]=to.get(r.item_id)||null;
+      if(a.op==="apply"&&v.note&&p.notes[r.item_id]) r.notes=[{side:null,issue:v.label,note:p.notes[r.item_id],logged_at:new Date().toISOString(),note_type:"Note"},...(r.notes||[])];
+      if(T&&a.op==="remove"){ const busy=a.key==="archive"?"archived":"pending_rescan"; if(r.status===busy) r.status=(S.rs||{})[a.key]||r.status; } }
+  }
+  return res;
+}
+async function statusUndo(p,res,i){
+  const {v}=p, field=sprop(v.field), n=(res.written_ids||[]).length;
+  if(!await ask({title:`Undo ${v.label.toLowerCase()}?`,body:`Puts ${n} card${n===1?"":"s"} back the way they were before this ${v.label.toLowerCase()} ${p.a.op==="apply"?"was set":"was removed"}.`,yes:"Yes, undo",danger:true})) return;
+  try{ const r=await api("status-undo",{run_id:res.run_id}); for(const c of S.matched) if(r.previous&&c.item_id in r.previous&&(r.restored_ids||[]).includes(c.item_id)) c[field]=r.previous[c.item_id]||null; recompute(false);
+    const el=$(`#saUndo${i}`); if(el) el.outerHTML=`<span class="dim">undone (${r.restored})</span>`; }
+  catch(e){ $("#barmsg").innerHTML+=` <span style="color:var(--warn)">${esc(e.message)}</span>`; }
+}
+async function statusRun(dry){
+  const plan=planList(); if(!plan.length) return;
+  const cb=$("#confirmBtn"), warn=m=>{ $("#barmsg").innerHTML=`<span style="color:var(--warn)">${m}</span>`; };
+  // read status, auth, dates and box from admin first (Metabase lags)
+  try{ await liveDates(S.rows.filter(r=>S.selected.has(r.item_id))); }catch(e){ return warn(`Couldn't read the cards from admin: ${esc(e.message)}`); }
   recompute(false);
-  const fails=res.failed?` <span style="color:var(--warn)">${res.failed} failed — ${esc(String((res.failures||[])[0]?.error||"").slice(0,160))}</span>`:"";
-  $("#barmsg").innerHTML=res.dry_run?`<b>Dry run done.</b> ${n} card${n===1?"":"s"} would ${a.op==="apply"?`be set to ${esc(v.value)}`:`have ${esc(v.value)} removed`}. Nothing was written.`
-    :`<b class="done-badge" style="font-size:14px">✓ ${n} card${n===1?"":"s"} ${a.op==="apply"?`set to ${esc(v.value)}`:`no longer ${esc(v.value)}`}.</b>${fails} ${n?`<button class="btn link" id="saUndo" type="button">Undo</button>`:""}`;
-  const u=$("#saUndo"); if(u) u.onclick=async()=>{
-    if(!await ask({title:"Undo this status change?",body:`Puts ${n} card${n===1?"":"s"} back to the ${v.field==="auth"?"authentication status":v.field==="archive"?"Archived At":"status"} they had before.`,yes:"Yes, undo",danger:true})) return;
-    try{ const r=await api("status-undo",{run_id:res.run_id}); for(const c of S.matched) if(r.previous&&c.item_id in r.previous&&(r.restored_ids||[]).includes(c.item_id)) c[field]=r.previous[c.item_id]||null; recompute(false); $("#barmsg").innerHTML=`<b>Undone.</b> ${r.restored} card${r.restored===1?"":"s"} put back.`; }
-    catch(e){ $("#barmsg").innerHTML=`<span style="color:var(--warn)">${esc(e.message)}</span>`; }
-  };
+  const preps=plan.map(statusPrep), bad=preps.find(p=>p.err); if(bad) return warn(bad.err);
+  const todo=preps.filter(p=>!p.none);
+  if(!todo.length) return warn(`Nothing to change: the selected cards are ${preps.map(p=>`${p.why}`).join(", ")} in admin.`);
+  const arcP=todo.find(p=>p.arc&&p.a.op==="apply");
+  const checks=arcP?`<div class="archchk"><label><input type="checkbox" id="chkEmailed"> I've emailed the customer</label>${arcP.boxed.length?`<div class="dim small">Still in a box in admin. Tick each one once it's been pulled:</div>`+arcP.boxed.map(r=>`<label><input type="checkbox" class="chkUnboxed"> 8AC ${esc(r.ac||r.ac_number||r.item_id)} has been removed from box <b>${esc(r.in_box)}</b></label>`).join(""):""}</div>`:"";
+  const line=p=>`<div class="planline"><b>${p.a.op==="apply"?"Set":"Remove"} ${esc(p.v.value)}</b> · ${p.hit.length} card${p.hit.length===1?"":"s"}${p.skip?` <span class="dim">(${p.skip} skipped)</span>`:""}<br>${p.what}${p.a.op==="apply"&&p.T?` e.g. <i>${esc(p.notes[p.hit[0].item_id]||"")}</i>`:""}</div>`;
+  const skipped=preps.filter(p=>p.none).map(p=>`${p.v.label} skipped: every selected card is ${p.why}.`);
+  const one=todo.length===1, cards=new Set(todo.flatMap(p=>p.hit.map(r=>r.item_id))).size;
+  const asking=ask({title:one?`${todo[0].a.op==="apply"?"Set":"Remove"} ${todo[0].v.value} on ${todo[0].hit.length} card${todo[0].hit.length===1?"":"s"}?`:`Make ${todo.length} changes on ${cards} card${cards===1?"":"s"}?`,
+    body:`${dry?"<b>Dry run:</b> records what would change without writing to admin.<br><br>":""}${todo.map(line).join("")}${skipped.length?`<div class="dim small">${skipped.join(" ")}</div>`:""}${one?"":`<div class="dim small">Runs in this order. If one fails, the ones after it don't run.</div>`}You can undo each one afterward.${checks}`,
+    yes:dry?"Run dry run":one?(todo[0].a.op==="apply"?`Yes, set ${todo[0].v.value}`:"Yes, remove it"):`Yes, make ${todo.length} changes`, danger:todo.every(p=>p.a.op==="remove")&&!dry});
+  if(checks){ const y=$("#dlgYes"), boxes=[...document.querySelectorAll("#dlgBody .archchk input")]; const upd=()=>{ y.disabled=!boxes.every(x=>x.checked); }; boxes.forEach(x=>x.onchange=upd); upd(); }
+  if(!await asking) return;
+  const conf={emailed:!!$("#chkEmailed")?.checked, unboxed:[...document.querySelectorAll("#dlgBody .chkUnboxed")].every(x=>x.checked)};
+  cb.disabled=true;
+  const done=[];
+  for(const p of todo){
+    $("#barmsg").innerHTML=`<span class="spin"></span>${dry?"Dry run":"Writing to admin"}: ${esc(p.v.label.toLowerCase())}… ${p.hit.length} cards`;
+    try{ done.push({p,res:await statusExec(p,dry,conf)}); }
+    catch(e){ done.push({p,err:e.message}); break; }
+  }
+  recompute(false);
+  const parts=done.map(({p,res,err},i)=>{
+    if(err) return `<span style="color:var(--warn)">${esc(p.v.label)}: ${esc(err)}</span>`;
+    const n=res.dry_run?(res.changes||[]).length:(res.written_ids||[]).length, f=res.failed?` <span style="color:var(--warn)">${res.failed} failed: ${esc(String((res.failures||[])[0]?.error||"").slice(0,140))}</span>`:"";
+    return res.dry_run?`${esc(p.v.label)}: ${n} would ${p.a.op==="apply"?"be set":"be removed"}`
+      :`<b class="done-badge" style="font-size:14px">✓ ${n} ${p.a.op==="apply"?`set to ${esc(p.v.value)}`:`no longer ${esc(p.v.value)}`}</b>${f}${n?` <button class="btn link" id="saUndo${i}" type="button">Undo</button>`:""}`;
+  });
+  const left=todo.length-done.length;
+  $("#barmsg").innerHTML=(dry?"<b>Dry run done.</b> Nothing was written. ":"")+parts.join(" · ")+(left?` · <span style="color:var(--warn)">${left} change${left===1?"":"s"} after it didn't run</span>`:"");
+  done.forEach(({p,res},i)=>{ const u=$(`#saUndo${i}`); if(u&&res) u.onclick=()=>statusUndo(p,res,i); });
 }
 // Archived: filter by card status (pick one or more; none picked = all)
 function statusChips(locked){
@@ -1450,7 +1484,7 @@ function renderInner(){
     </div>
     ${ARCHK(S.kind)||S.kind==="arena"||S.kind==="cards"?`<div class="sactwrap">${statusActions(locked)}</div>`:""}
     ${S.missing&&S.missing.length&&!locked?`<div class="warn"><b>Nothing found for ${esc(S.missing.join(", "))}.</b> ${S.missing.length<[].concat(S.filters.player_name).length?"Showing only the names that matched.":"Nothing else was selected."}</div>`:""}
-    ${replacing&&!locked&&!S.sact?`<div class="warn"><b>${replacing} selected ${replacing===1?"card already has":"cards already have"} a different tag.</b> A card holds one tag, so it will be replaced. Tick "Skip cards that already have a tag" or deselect them to keep it.</div>`:""}
+    ${replacing&&!locked&&!planList().length?`<div class="warn"><b>${replacing} selected ${replacing===1?"card already has":"cards already have"} a different tag.</b> A card holds one tag, so it will be replaced. Tick "Skip cards that already have a tag" or deselect them to keep it.</div>`:""}
   </div>`;
   const showRows=(S.phase==="done"&&!S.showAll)?S.done:S.rows;
   const LIMIT=S.limit||240;
@@ -1801,11 +1835,13 @@ $("#info").addEventListener("close",()=>{WI=null});
 function renderBar(n,replacing){
   const bar=$("#bar"); bar.hidden=false;
   const cb=$("#confirmBtn"), msg=$("#barmsg");
-  if(S&&(ARCHK(S.kind)||S.kind==="arena"||S.kind==="cards")&&S.sact&&S.phase==="review"){
-    const a=S.sact, v=SACTS[a.key], {hit,skip}=saTargets(), needNote=a.op==="apply"&&v.note&&hit.some(r=>!cardNote(r,a.key,S.snote));
-    cb.hidden=false; cb.disabled=!hit.length||needNote; cb.className="btn big "+(a.op==="apply"?"primary":"danger");
-    cb.textContent=`${a.op==="apply"?"Set":"Remove"} ${v.value} (${hit.length})`;
-    msg.innerHTML=needNote?`<span style="color:var(--warn)">Add a note for ${v.label.toLowerCase()}.</span>`:`<b>${hit.length}</b> card${hit.length===1?"":"s"} will ${a.op==="apply"?`be set to <b>${esc(v.value)}</b>`:`have <b>${esc(v.value)}</b> removed`}${skip?` · ${skip} skipped (${a.op==="apply"?"already":"not"} ${esc(v.value)})`:""}`;
+  if(S&&(ARCHK(S.kind)||S.kind==="arena"||S.kind==="cards")&&planList().length&&S.phase==="review"){
+    const plan=planList(), rows=plan.map(a=>({a,v:SACTS[a.key],...saTargets(a)})), act=rows.filter(x=>x.hit.length);
+    const needNote=rows.some(x=>x.a.op==="apply"&&TSK[x.a.key]&&x.hit.some(r=>!cardNote(r,x.a.key,(S.sn||{})[x.a.key])));
+    const one=plan.length===1, x0=rows[0];
+    cb.hidden=false; cb.disabled=!act.length||needNote; cb.className="btn big "+(plan.every(a=>a.op==="remove")?"danger":"primary");
+    cb.textContent=one?`${x0.a.op==="apply"?"Set":"Remove"} ${x0.v.value} (${x0.hit.length})`:`Make ${act.length} change${act.length===1?"":"s"}`;
+    msg.innerHTML=needNote?`<span style="color:var(--warn)">Pick a note for every card.</span>`:rows.map(x=>`<b>${x.hit.length}</b> ${x.a.op==="apply"?`→ <b>${esc(x.v.value)}</b>`:`remove <b>${esc(x.v.value)}</b>`}${x.skip?` <span class="dim">(${x.skip} skipped)</span>`:""}`).join(" · ");
     if(document.body.classList.contains("readonly")) msg.innerHTML+=` · <span style="color:var(--warn)">View only — your login can't make changes.</span>`;
     return;
   }
@@ -1839,18 +1875,22 @@ function bindSummary(){
   const lb=$("#liveBtn"); if(lb) lb.onclick=async()=>{ lb.disabled=true; lb.textContent="Refreshing…"; await refreshLive(); };
   const alb=$("#archLiveBtn"); if(alb) alb.onclick=async()=>{ alb.disabled=true; alb.textContent="Refreshing…"; await refreshArchived(); };
   const o75=$("#only75"); if(o75) o75.onclick=()=>{ S.only75=!S.only75; recompute(true); };
-  document.querySelectorAll(".sabtn").forEach(b=>b.onclick=()=>{ const k=b.dataset.sk, op=b.dataset.sop; S.sact=(S.sact&&S.sact.key===k&&S.sact.op===op)?null:{key:k,op}; S.npick={}; render();
-    if(S.sact&&TSK[k]){ const mine=S; liveDates(saTargets().sel).then(()=>{ if(S===mine&&S.sact){ recompute(false); render(); } }).catch(()=>{}); } const t=$("#saNote"); if(t) t.focus(); });
-  const na=$("#saAlsoNA"); if(na) na.onchange=()=>{ S.alsoNA=na.checked; };
-  const rs=$("#saRestore"); if(rs) rs.onchange=()=>{ S.restore=rs.value; };
-  const sc=$("#saCancel"); if(sc) sc.onclick=()=>{ S.sact=null; render(); };
-  document.querySelectorAll(".npill").forEach(b=>b.onclick=()=>{ const id=b.dataset.nid, g=b.dataset.ng, v=b.dataset.nv, sel=saTargets().sel; S.npick=S.npick||{};
-    const set=(r,val)=>{ (S.npick[r.item_id]=S.npick[r.item_id]||{})[g]=val; };
-    const at=(TSK[S.sact&&S.sact.key]||TSK.archive).at;
-    if(id==="*"){ const live=sel.filter(r=>!r[at]), on=live.length&&live.every(r=>notePick(r)[g]===v); live.forEach(r=>set(r,on?"":v)); } // Set all: click a lit pill to clear it on every card
-    else { const r=sel.find(x=>x.item_id===id); if(r) set(r,notePick(r)[g]===v?"":v); }
+  document.querySelectorAll(".sabtn").forEach(b=>b.onclick=()=>{ const k=b.dataset.sk, op=b.dataset.sop; S.plan=S.plan||{};
+    if(S.plan[k]===op) delete S.plan[k]; else S.plan[k]=op;            // click again to unpick; Apply ↔ Remove swaps
+    S.sact=planList()[0]||null; render();
+    if(S.plan[k]){ const mine=S; liveDates(S.rows.filter(r=>S.selected.has(r.item_id))).then(()=>{ if(S===mine&&planList().length){ recompute(false); render(); } }).catch(()=>{}); } });
+  document.querySelectorAll(".saRestore").forEach(x=>x.onchange=()=>{ (S.rs=S.rs||{})[x.dataset.key]=x.value; });
+  const sc=$("#saCancel"); if(sc) sc.onclick=()=>{ S.plan={}; S.sact=null; render(); };
+  document.querySelectorAll(".npill").forEach(b=>b.onclick=()=>{ const key=b.dataset.key, id=b.dataset.nid, g=b.dataset.ng, v=b.dataset.nv, sel=S.rows.filter(r=>S.selected.has(r.item_id));
+    S.np=S.np||{}; const np=(S.np[key]=S.np[key]||{});
+    const set=(r,val)=>{ (np[r.item_id]=np[r.item_id]||{})[g]=val; };
+    const live=sel.filter(r=>sval(r,SACTS[key].field)!==SACTS[key].value);
+    if(id==="*"){ const on=live.length&&live.every(r=>notePick(r,key)[g]===v); live.forEach(r=>set(r,on?"":v)); } // Set all: click a lit pill to clear it on every card
+    else { const r=sel.find(x=>x.item_id===id); if(r) set(r,notePick(r,key)[g]===v?"":v); }
     render(); });
-  const sn=$("#saNote"); if(sn) sn.oninput=()=>{ S.snote=sn.value; if(S.sact&&TSK[S.sact.key]) for(const r of saTargets().sel){ const b=document.querySelector(`[data-prev="${CSS.escape(r.item_id)}"]`); if(b) b.textContent=cardNote(r,S.sact.key,S.snote)||""; } const n=S.rows.filter(r=>S.selected.has(r.item_id)).length; renderBar(n,0); };
+  document.querySelectorAll(".saNote").forEach(t=>t.oninput=()=>{ const key=t.dataset.key; (S.sn=S.sn||{})[key]=t.value;
+    for(const r of S.rows.filter(r=>S.selected.has(r.item_id))){ const b=document.querySelector(`[data-prev="${key}:${CSS.escape(r.item_id)}"]`); if(b) b.textContent=cardNote(r,key,t.value)||""; }
+    renderBar(S.rows.filter(r=>S.selected.has(r.item_id)).length,0); });
   document.querySelectorAll(".stchip").forEach(b=>b.onclick=()=>{ const k=b.dataset.st; if(!k) S.stat=new Set(); else { S.stat.has(k)?S.stat.delete(k):S.stat.add(k); } recompute(true); });
   const bo=$("#backOrders"); if(bo) bo.onclick=()=>{ S.order=null; recompute(true); };
   document.querySelectorAll(".obtn").forEach(b=>b.onclick=()=>{ S.order=S.order===b.dataset.order?null:b.dataset.order; recompute(true); });
@@ -1886,7 +1926,7 @@ const tagCounts=rows=>{const m=new Map();rows.forEach(r=>{const k=r.tag||"(no ta
 
 $("#confirmBtn").onclick=async()=>{
   // a status change (Archive, Not accepted, rescan) never touches tags; Cards tile included
-  if(S&&(ARCHK(S.kind)||S.kind==="arena"||S.kind==="cards")&&S.sact) return statusRun($("#dry").checked);
+  if(S&&(ARCHK(S.kind)||S.kind==="arena"||S.kind==="cards")&&planList().length) return statusRun($("#dry").checked);
   const sel=S.rows.filter(r=>S.selected.has(r.item_id));
   const dry=$("#dry").checked;
   const dryNote=dry?"<b>Dry run:</b> records what would change without writing to admin.<br><br>":"";

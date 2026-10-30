@@ -133,7 +133,7 @@ The **Archive** action on the Archived, Precision Labeling and Arena Club tiles 
 
 Every PATCH is checked against the card admin sends back. If the log isn't saved, the card isn't touched. `ARCHIVE_LOG_PATH` overrides `/v2/operation-logs`.
 
-- **Archive + Not accepted:** tick *Also set Not accepted* in the Archive panel. Each card's authentication is set to `not_accepted` first (skipped if it already is), then it's archived. If the authentication change fails, that card isn't archived. Undo puts both back.
+- **Combine changes:** pick Apply or Remove in any of the three groups (Not accepted, Pending rescan, Archive), in any mix. One confirm runs them in order (Not accepted → Pending rescan → Archive); if one fails, the ones after it don't run. Each gets its own Undo.
 - **Bulk:** select one card or many (up to the run limit). Each card gets its own row of note pills, pre-filled from its archive log; with several selected, **Set all** pills fill every card at once and any single card can be changed after. Cards already archived in admin are shown and skipped. Each card gets its own log entry and Archived At write; undo covers the whole batch.
 - Before Set, TAG-BOT asks the two questions admin asks in pop-ups as checkboxes: *I've emailed the customer* once for the batch, and *removed from box N* for each card admin still has in a box (`boxId`). Both are logged on the run. Archiving doesn't clear `boxId` in admin, the same as admin's own Set.
 
