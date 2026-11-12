@@ -167,3 +167,15 @@ All four corners get an approved override under the TAG-BOT user's name, even on
 ## Grades row (Arena Club tile)
 
 Above Change status, in run order: **① Remove subgrades task** (corners Review Override → none), **② Clear subgrades** (pick which, → 0), **③ Clear overall** (→ 0). **Apply to admin (N)** fills 0 into the selected cards' overall and the picked subgrades, then opens the usual Save & approve confirm (label + slab rebuilt, approved, undo from Recent runs). ③ Remove subgrades task (amber row): **Corners** runs the corner Review Override → none below, after any zeros are saved; Centering / Edges / Surface show "(soon)" until their Review Override is captured.
+
+### Edges → none
+
+① Remove subgrades task → **Edges** overrides all four edges (top / bottom / left / right), approved under the TAG-BOT user's name (captured from admin's edge Review Override):
+
+| Step | Call |
+|---|---|
+| Edges | from the same `GET /grading_tasks?where=card_id=…` (`kind:"edge"`); `linePadding`, `cardOffset`, `cardSize` copied from the reviewed grade |
+| Override | `POST /grades/edge { grade: { kind:"review", status:"reviewer_override", labels: [], side, cardId, gradingTaskId, picture ids, graderId, userId, name, linePadding, cardOffset, cardSize }, croppedAt: null }` |
+| Approve | `PATCH /grades/edge/{id} { status:"approved", labels: [], notes:[{note:"Edge Auto Approved"}] }` (if that body isn't accepted, it's sent wrapped in `grade`) |
+
+An edge's "none" is no annotations (`labels: []`). Undo puts each edge's annotations back.

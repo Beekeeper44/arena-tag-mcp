@@ -3,7 +3,7 @@
 import { randomBytes } from "crypto";
 import { config, validateTag } from "./config";
 import { queryCards, queryCardsDetailed, summarize, type CardFilters, type CardRow, type PostFilters } from "./metabase";
-import { openAdminSession, liveCards, patchTag, regenerateImages, approveReview, changeGradesLikeReview, graderIdFor, cornersNow, overrideCorner, cardGrades, type WriteResult, type WriteKind, type CornerLabel, type CornerNow } from "./admin";
+import { openAdminSession, liveCards, patchTag, regenerateImages, approveReview, changeGradesLikeReview, graderIdFor, cornersNow, overrideCorner, edgesNow, overrideEdge, cardGrades, type WriteResult, type WriteKind, type CornerLabel, type CornerNow } from "./admin";
 import { searchWatches, watchLabel, type WatchRow } from "./watches";
 import { searchArena, type ArenaCard } from "./arena";
 import { searchArchived, type ArchivedCard } from "./archived";
@@ -278,8 +278,10 @@ export async function undoRun(input: { run_id: string; confirm: boolean; request
   // corner runs: override each changed corner back to the labels it had
   if ((run.kind as string) === "corners") {
     const back = items.filter((i) => i.previous_tag);
-    const res = await applyCorners(undoId, back.map((i) => { const prev = JSON.parse(i.previous_tag as string) as Record<string, CornerLabel[]>; return { item_id: i.item_id, want: (side: string) => prev[side] ?? null }; }),
-      "restored", input.as_admin_user_id, input.requested_by, false);
+    const back2 = back.map((i) => ({ i, prev: JSON.parse(i.previous_tag as string) as Record<string, CornerLabel[]> }));
+    const parts: Part[] = back2.some((x) => Object.keys(x.prev).some((k) => k.startsWith("edge:"))) ? ["corner", "edge"] : ["corner"];
+    const res = await applyCorners(undoId, back2.map(({ i, prev }) => ({ item_id: i.item_id, want: (side: string, _c: CornerLabel[], part: Part) => (part === "edge" ? prev["edge:" + side] : prev[side]) ?? null })),
+      "restored", input.as_admin_user_id, input.requested_by, false, false, parts);
     const st = res.failed ? "partial" : "completed";
     await q(`UPDATE tag_runs SET status=$2, finished_at=now(), result=$3 WHERE id=$1`, [undoId, st, JSON.stringify({ ...res, cards: undefined })]);
     await q(`UPDATE tag_runs SET status='undone' WHERE id=$1 AND $2 = 'completed'`, [run.id, st]);
@@ -665,7 +667,8 @@ export async function runGradeUpdate(input: { text: string; items: { item_id: st
 // ---------- Arena Club: every corner annotation → none, overridden + approved like the grading page (logged, undoable) ----------
 // previous_tag keeps each corner's labels before the change, so undo re-overrides them back.
 type CornerPrev = Record<string, CornerLabel[]>;
-async function applyCorners(runId: string, items: { item_id: string; want: (side: string, cur: CornerLabel[]) => CornerLabel[] | null }[], okStatus: string, adminUserId: string | undefined, name: string, dry: boolean, skipImages = false) {
+type Part = "corner" | "edge";
+async function applyCorners(runId: string, items: { item_id: string; want: (side: string, cur: CornerLabel[], part: Part) => CornerLabel[] | null }[], okStatus: string, adminUserId: string | undefined, name: string, dry: boolean, skipImages = false, parts: Part[] = ["corner"]) {
   const userId = adminUserId || config.sessionUserId();
   const session = await openAdminSession(adminUserId);
   const cards: { item_id: string; changed: string[]; corners_before: number | null; corners_after: number | null; overall: number | null; error?: string; prev: CornerPrev }[] = [];
@@ -675,11 +678,17 @@ async function applyCorners(runId: string, items: { item_id: string; want: (side
       const row = { item_id: it.item_id, changed: [] as string[], corners_before: null as number | null, corners_after: null as number | null, overall: null as number | null, error: undefined as string | undefined, prev: {} as CornerPrev };
       try {
         // read grades + corners together, then all four corners at once (each is its own override + approve)
-        const [g0, corners] = await Promise.all([cardGrades(session, it.item_id), cornersNow(session, it.item_id)]);
+        const [g0, corners, edges] = await Promise.all([cardGrades(session, it.item_id),
+          parts.includes("corner") ? cornersNow(session, it.item_id) : Promise.resolve([] as CornerNow[]),
+          parts.includes("edge") ? edgesNow(session, it.item_id) : Promise.resolve([] as Awaited<ReturnType<typeof edgesNow>>)]);
         row.corners_before = g0.corners; row.corners_after = g0.corners; row.overall = g0.overall;
-        const todo = corners.map((c) => ({ c, next: it.want(c.side, c.labels) })).filter((x): x is { c: CornerNow; next: CornerLabel[] } => !!x.next);
-        for (const { c } of todo) { row.prev[c.side] = c.labels; row.changed.push(c.side); }
-        if (!dry) await Promise.all(todo.map(({ c, next }) => overrideCorner(session, it.item_id, c, next, { userId, graderId, name })));
+        const who = { userId, graderId, name };
+        const jobs: (() => Promise<unknown>)[] = [];
+        for (const c of corners) { const next = it.want(c.side, c.labels, "corner"); if (!next) continue;
+          row.prev[c.side] = c.labels; row.changed.push(c.side); jobs.push(() => overrideCorner(session, it.item_id, c, next, who)); }
+        for (const e of edges) { const next = it.want(e.side, e.labels, "edge"); if (!next) continue;
+          row.prev["edge:" + e.side] = e.labels; row.changed.push("edge " + e.side); jobs.push(() => overrideEdge(session, it.item_id, e, next, who)); }
+        if (!dry) await Promise.all(jobs.map((j) => j()));
         if (!dry && row.changed.length && !skipImages) {
           const r = await regenerateImages(session, it.item_id);
           if (r.error) row.error = `corners saved; label/slab rebuild failed: ${r.error}`;
@@ -703,7 +712,8 @@ async function applyCorners(runId: string, items: { item_id: string; want: (side
     failures: cards.filter((c) => c.error).map((c) => ({ item_id: c.item_id, error: c.error })).slice(0, 20),
   };
 }
-export async function runCornersNone(input: { text: string; item_ids: string[]; dry_run?: boolean; skip_images?: boolean; user: string; as_admin_user_id?: string }) {
+export async function runCornersNone(input: { text: string; item_ids: string[]; dry_run?: boolean; skip_images?: boolean; parts?: string[]; user: string; as_admin_user_id?: string }) {
+  const parts = (input.parts?.length ? input.parts : ["corner"]).filter((p): p is Part => p === "corner" || p === "edge");
   const ids = [...new Set((input.item_ids || []).filter((x) => /^[0-9a-f-]{36}$/i.test(String(x))))];
   if (!ids.length) throw new Error("Select the cards first.");
   if (ids.length > config.maxArchivePerRun()) throw new Error(`${ids.length} cards is over the ${config.maxArchivePerRun()}-card limit for corner overrides.`);
@@ -716,16 +726,18 @@ export async function runCornersNone(input: { text: string; item_ids: string[]; 
   await q(
     `INSERT INTO tag_runs (id, status, action, tag, mode, filters, post_filters, requested_by, preview_count, staged_by, staged_at, staged_count, approved_by, live_at, dry_run, expires_at, kind)
      VALUES ($1,'executing','corners',NULL,'overwrite',$2,'{}',$3,$4,$3,now(),$4,$3,now(),$5,$6,'corners')`,
-    [id, JSON.stringify({ text: input.text, source: "arena_club", corners: "none" }), input.user, chosen.length, dry, hoursFromNow(1)]
+    [id, JSON.stringify({ text: input.text, source: "arena_club", corners: "none", parts }), input.user, chosen.length, dry, hoursFromNow(1)]
   );
   await q(
     `INSERT INTO tag_run_items (run_id, item_id, previous_tag, new_tag, label, ev)
      SELECT $1, t.item_id, NULL, 'none', t.label, t.ev FROM unnest($2::text[], $3::text[], $4::numeric[]) AS t(item_id, label, ev)`,
-    [id, chosen.map((c) => c.item_id), chosen.map((c) => [`order ${c.order_number}`, c.player_name, "corners → none"].join(" · ")), chosen.map((c) => c.ev)]
+    [id, chosen.map((c) => c.item_id), chosen.map((c) => [`order ${c.order_number}`, c.player_name, `${parts.join(" + ")}s → none`].join(" · ")), chosen.map((c) => c.ev)]
   );
   // every corner gets a new approved override under the TAG-BOT user's name, even if it already reads none
-  const toNone = (_: string, cur: CornerLabel[]) => (cur.length ? cur : [{ kind: "wear", side: "front", severity: "" }, { kind: "wear", side: "back", severity: "" }]).map((l) => ({ kind: l.kind, side: l.side, severity: "none" }));
-  const res = await applyCorners(id, chosen.map((c) => ({ item_id: c.item_id, want: toNone })), "written", input.as_admin_user_id, input.user, dry, input.skip_images === true);
+  // corners: every annotation at severity none; edges: no annotations (an edge's "none" is an empty list)
+  const toNone = (_: string, cur: CornerLabel[], part: Part) => part === "edge" ? [] :
+    (cur.length ? cur : [{ kind: "wear", side: "front", severity: "" }, { kind: "wear", side: "back", severity: "" }]).map((l) => ({ kind: l.kind, side: l.side, severity: "none" }));
+  const res = await applyCorners(id, chosen.map((c) => ({ item_id: c.item_id, want: toNone })), "written", input.as_admin_user_id, input.user, dry, input.skip_images === true, parts);
   const status = dry ? "dry_run_completed" : res.failed ? (res.succeeded ? "partial" : "failed") : "completed";
   await q(`UPDATE tag_runs SET status=$2, finished_at=now(), result=$3 WHERE id=$1`, [id, status, JSON.stringify({ ...res, cards: undefined })]);
   return { run_id: id, status, dry_run: dry, ...res };

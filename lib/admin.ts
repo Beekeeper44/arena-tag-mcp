@@ -452,3 +452,45 @@ export async function cardGrades(session: AdminSession, cardId: string) {
   const n = (v: unknown) => (v === null || v === undefined || v === "" ? null : Number(v));
   return { corners: n(c.corners), overall: n(c.overall), centering: n(c.centering), edges: n(c.edges), surface: n(c.surface) };
 }
+
+// ---------- Edges → none: the edge "Review Override" + approve, captured from admin ----------
+//   POST  /grades/edge        { grade: { kind:"review", status:"reviewer_override", labels: [], side, cardId, gradingTaskId, picture ids,
+//                                        graderId, userId, name, linePadding, cardOffset, cardSize, timing }, croppedAt: null }
+//   PATCH /grades/edge/{id}   { status:"approved", labels: [], notes:[{kind:"secondary", note:"Edge Auto Approved", …}], timing }
+// An edge with no damage has labels [] (edge annotations carry a position, so "none" = no annotations).
+export type EdgeNow = CornerNow & { linePadding: unknown; cardOffset: unknown; cardSize: unknown };
+const EDGE_SIDES = ["top", "bottom", "left", "right"];
+export async function edgesNow(session: AdminSession, cardId: string): Promise<EdgeNow[]> {
+  const j = await adminJson(session, `/grading_tasks?where=card_id=${cardId}`);
+  const tasks: any[] = Array.isArray(j?.data) ? j.data : Array.isArray(j) ? j : [];
+  const out: EdgeNow[] = [];
+  for (const t of tasks) {
+    if (t?.kind !== "edge" || !EDGE_SIDES.includes(t.side)) continue;
+    const gs: any[] = (Array.isArray(t.grades) ? t.grades : []).slice().sort((a: any, b: any) => String(b.createdAt).localeCompare(String(a.createdAt)));
+    const g = gs.find((x) => x.status === "approved" || x.status === "reviewer_override") ?? gs[0];
+    if (!g) continue;
+    // the padding / offset / card size come from the reviewed grade (the model's own grade leaves them empty)
+    const geo = gs.find((x) => x.linePadding != null) ?? g;
+    out.push({ taskId: t.id, side: t.side, labels: (Array.isArray(g.labels) ? g.labels : []) as CornerLabel[],
+      frontPictureId: g.frontPictureId ?? null, backPictureId: g.backPictureId ?? null,
+      linePadding: geo.linePadding ?? null, cardOffset: geo.cardOffset ?? null, cardSize: geo.cardSize ?? null });
+  }
+  return out.sort((a, b) => EDGE_SIDES.indexOf(a.side) - EDGE_SIDES.indexOf(b.side));
+}
+export async function overrideEdge(session: AdminSession, cardId: string, e: EdgeNow, labels: CornerLabel[], who: { userId: string; graderId: string; name: string }) {
+  const startedAt = new Date().toISOString();
+  const created = await adminJson(session, "/grades/edge", "POST", { croppedAt: null, grade: {
+    backPictureId: e.backPictureId, cardId, cardOffset: e.cardOffset, cardSize: e.cardSize, duration: 0, expectedAccuracy: null, finishedAt: new Date().toISOString(),
+    frontPictureId: e.frontPictureId, graderId: who.graderId, gradingTaskId: e.taskId, kind: "review", labels, linePadding: e.linePadding,
+    name: who.name, side: e.side, startedAt, status: "reviewer_override", userId: who.userId } });
+  const id = (created?.grade ?? created)?.id;
+  if (!id) throw new Error(`edge ${e.side}: admin didn't return the new edge grade`);
+  const finishedAt = new Date().toISOString();
+  const patch = { finishedAt, labels, startedAt, status: "approved", verificationDuration: 0,
+    notes: [{ kind: "secondary", name: who.name, note: "Edge Auto Approved", status: "approved", userId: who.userId, graderId: who.graderId, duration: 0, createdAt: finishedAt }] };
+  let ok = await adminJson(session, `/grades/edge/${id}`, "PATCH", patch);
+  // ponytail: the approve body wasn't captured for edges; if the corner-style body doesn't take, send it wrapped like the POST
+  if ((ok?.grade ?? ok)?.status !== "approved") ok = await adminJson(session, `/grades/edge/${id}`, "PATCH", { grade: patch });
+  if ((ok?.grade ?? ok)?.status !== "approved") throw new Error(`edge ${e.side}: override saved but not approved (admin shows "${(ok?.grade ?? ok)?.status ?? "?"}")`);
+  return id as string;
+}
