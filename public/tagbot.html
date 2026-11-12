@@ -1325,7 +1325,7 @@ async function cornersNone(){
   const sel=S.rows.filter(r=>S.selected.has(r.item_id)), dry=$("#dry").checked;
   if(!sel.length){ $("#barmsg").innerHTML=`<span class="warn-txt">Select the cards first.</span>`; return; }
   const ok=await ask({title:`Set every corner annotation to none on ${sel.length} card${sel.length===1?"":"s"}?`,
-    body:`${dry?"<b>Dry run:</b> reads each card's corners from admin and lists what would change. Nothing is written.<br><br>":""}For each corner that still has wear or damage marked, TAG-BOT makes a <b>review override</b> with every annotation set to <b>none</b> and approves it, the same as editing the corner on the grading page and clicking Approve. Corners already at none are skipped.
+    body:`${dry?"<b>Dry run:</b> reads each card's corners from admin and lists what would change. Nothing is written.<br><br>":""}For <b>all four corners</b>, TAG-BOT makes a <b>review override</b> with every annotation set to <b>none</b> and approves it under your name, the same as editing the corner on the grading page and clicking Review Override. Corners already at none are overridden too, so every corner shows your approval.
       <br><br>Admin then recalculates the <b>Corners</b> subgrade, and the label and slab are rebuilt. The <b>overall</b> isn't changed: cards whose subgrades moved show <b>RECHECK</b> so you can fix the overall with Save & approve.
       <div class="dim small" style="margin-top:8px">Credited to your grader profile, with no accuracy score. You can undo from Recent runs (it overrides each corner back).</div>`,
     yes:dry?"Run dry run":"Yes, set corners to none"});
@@ -1340,7 +1340,7 @@ async function cornersNone(){
     recheck(row); }
   recompute(false);
   const lines=(r.cards||[]).filter(c=>c.changed.length||c.error).slice(0,6).map(c=>{ const row=S.matched.find(x=>x.item_id===c.item_id)||{};
-    return `<span class="dim">AC ${esc(row.ac||"")}</span> ${c.changed.length} corner${c.changed.length===1?"":"s"}${c.corners_before!=null&&c.corners_after!=null&&!r.dry_run?` · Corners ${c.corners_before} → <b>${c.corners_after}</b>`:""}${c.error?` <span class="warn-txt">${esc(c.error.slice(0,120))}</span>`:""}`; });
+    return `<span class="dim">AC ${esc(row.ac||"")}</span> ${c.changed.length} corner${c.changed.length===1?"":"s"}${c.changed.length?` (${c.changed.map(x=>x.replace("_"," ")).join(", ")})`:""}${c.corners_before!=null&&c.corners_after!=null&&!r.dry_run?` · Corners ${c.corners_before} → <b>${c.corners_after}</b>`:""}${c.error?` <span class="warn-txt">${esc(c.error.slice(0,120))}</span>`:""}`; });
   const none=(r.cards||[]).filter(c=>!c.changed.length&&!c.error).length;
   $("#barmsg").innerHTML=r.dry_run?`<b>Dry run:</b> ${r.would_write||0} card${r.would_write===1?"":"s"} would have corners overridden${none?` · ${none} already none`:""}. ${lines.join(" · ")}`
     :`<b class="done-badge" style="font-size:14px">✓ Corners → none on ${r.succeeded} card${r.succeeded===1?"":"s"}</b>${r.failed?` <span class="warn-txt">${r.failed} failed</span>`:""}${none?` · ${none} already none`:""}${moved?` · <b>${moved}</b> Corners subgrade changed: check RECHECK cards' overall`:""}<br>${lines.join(" · ")} <span class="dim">· undo from Recent runs</span>`;

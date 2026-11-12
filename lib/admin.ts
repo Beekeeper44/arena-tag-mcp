@@ -178,7 +178,7 @@ export async function regenerateImages(session: AdminSession, itemId: string) {
     if (save.frontLabelPictureUrl) save.frontV2LabelPictureUrl = card.frontV2LabelPictureUrl = save.frontLabelPictureUrl;
     if (save.backLabelPictureUrl) save.backV2LabelPictureUrl = card.backV2LabelPictureUrl = save.backLabelPictureUrl;
     if (labels.labelVersion != null) save.labelVersion = card.labelVersion = labels.labelVersion;
-    if (!save.frontLabelPictureUrl) { out.error = "generate_label_images returned no label"; return out; }
+    if (!save.frontLabelPictureUrl) { out.error = `generate_label_images returned no label (admin sent ${JSON.stringify(labels).slice(0, 160)})`; return out; }
 
     const sr = await call(`/cards/generate_slab_images`, "PATCH", card);
     out.slab = sr.status;

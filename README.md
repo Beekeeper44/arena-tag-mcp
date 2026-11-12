@@ -162,7 +162,7 @@ One card or a batch (up to `MAX_ARCHIVE_PER_RUN`), with the same note pills and 
 | Approve | `PATCH /grades/corner/{id} { status:"approved", labels, notes:[{kind:"secondary", note:"Corner Auto Approved"}] }` |
 | Images | `PATCH /cards/generate_label_images`, `/cards/generate_slab_images` (once per card) |
 
-Corners already at none are skipped. Admin recalculates the Corners subgrade; the overall isn't changed, so cards whose subgrades moved show **RECHECK**. Dry run reads and reports only. Undo (Recent runs) overrides each corner back to its previous labels. Limit: `MAX_ARCHIVE_PER_RUN` cards (8 admin calls per card).
+All four corners get an approved override under the TAG-BOT user's name, even ones already at none. The admin API doesn't recalculate the Corners subgrade from the new annotations (the admin page does that itself), so set Corners with the grade editor if it should change. Dry run reads and reports only. Undo (Recent runs) overrides each corner back to its previous labels. Limit: `MAX_ARCHIVE_PER_RUN` cards (8 admin calls per card).
 
 ## Grades row (Arena Club tile)
 

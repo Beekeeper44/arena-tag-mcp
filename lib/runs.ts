@@ -3,7 +3,7 @@
 import { randomBytes } from "crypto";
 import { config, validateTag } from "./config";
 import { queryCards, queryCardsDetailed, summarize, type CardFilters, type CardRow, type PostFilters } from "./metabase";
-import { openAdminSession, patchTag, regenerateImages, approveReview, changeGradesLikeReview, graderIdFor, cornersNow, overrideCorner, cardGrades, type WriteResult, type WriteKind, type CornerLabel } from "./admin";
+import { openAdminSession, liveCards, patchTag, regenerateImages, approveReview, changeGradesLikeReview, graderIdFor, cornersNow, overrideCorner, cardGrades, type WriteResult, type WriteKind, type CornerLabel } from "./admin";
 import { searchWatches, watchLabel, type WatchRow } from "./watches";
 import { searchArena, type ArenaCard } from "./arena";
 import { searchArchived, type ArchivedCard } from "./archived";
@@ -610,12 +610,22 @@ export async function runGradeUpdate(input: { text: string; items: { item_id: st
   if (items.length > config.maxItemsPerRun()) throw new Error(`${items.length} cards is over the ${config.maxItemsPerRun()}-item limit.`);
   const fresh = await searchArena(input.text);
   const byId = new Map(fresh.rows.map((r) => [r.item_id, r]));
+  // Compare with admin's grades right now, not Metabase's copy (it lags: a card just re-graded in admin
+  // would otherwise look "already done" and be skipped). Metabase is only the fallback if admin can't be read.
+  const live: Record<string, Record<string, unknown>> = await (async () => {
+    const ids = items.map((x) => x.item_id).filter((id) => /^[0-9a-f-]{36}$/i.test(id));
+    if (!ids.length) return {};
+    const session = await openAdminSession(input.as_admin_user_id);
+    try { return await liveCards(session, ids); } catch { return {}; } finally { await session.revoke(); }
+  })();
   const now = (c: ArenaCard, g: Grade): number | null => {
-    const v = g === "overall" ? ((c as any).check_overall ?? c.grade_num) : (c as any)[g];
+    const l = live[c.item_id];
+    const v = l && l[g] !== undefined ? l[g] : g === "overall" ? ((c as any).check_overall ?? c.grade_num) : (c as any)[g];
     return v == null || v === "" ? null : Number(v);
   };
   const changes = items.flatMap((x) => {
-    const c = byId.get(x.item_id);
+    // a card Metabase hasn't caught up with yet (or has moved) is still written, using admin's values
+    const c = byId.get(x.item_id) ?? (live[x.item_id] ? ({ item_id: x.item_id, order_number: "", player_name: "", ev: 0 } as unknown as ArenaCard) : undefined);
     if (!c || c.item_id.startsWith("noid:")) return [];
     const next: Record<string, number> = {}, prev: Record<string, number> = {};
     for (const [k, v] of Object.entries(x.grades) as [Grade, number][]) {
@@ -715,7 +725,8 @@ export async function runCornersNone(input: { text: string; item_ids: string[]; 
      SELECT $1, t.item_id, NULL, 'none', t.label, t.ev FROM unnest($2::text[], $3::text[], $4::numeric[]) AS t(item_id, label, ev)`,
     [id, chosen.map((c) => c.item_id), chosen.map((c) => [`order ${c.order_number}`, c.player_name, "corners → none"].join(" · ")), chosen.map((c) => c.ev)]
   );
-  const toNone = (_: string, cur: CornerLabel[]) => (cur.some((l) => l.severity && l.severity !== "none") ? cur.map((l) => ({ kind: l.kind, side: l.side, severity: "none" })) : null);
+  // every corner gets a new approved override under the TAG-BOT user's name, even if it already reads none
+  const toNone = (_: string, cur: CornerLabel[]) => (cur.length ? cur : [{ kind: "wear", side: "front", severity: "" }, { kind: "wear", side: "back", severity: "" }]).map((l) => ({ kind: l.kind, side: l.side, severity: "none" }));
   const res = await applyCorners(id, chosen.map((c) => ({ item_id: c.item_id, want: toNone })), "written", input.as_admin_user_id, input.user, dry);
   const status = dry ? "dry_run_completed" : res.failed ? (res.succeeded ? "partial" : "failed") : "completed";
   await q(`UPDATE tag_runs SET status=$2, finished_at=now(), result=$3 WHERE id=$1`, [id, status, JSON.stringify({ ...res, cards: undefined })]);
