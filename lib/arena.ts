@@ -1,6 +1,7 @@
 // Arena Club tile: search any number of orders through the Metabase question in ARENA_METABASE_CARD_ID,
 // using its own Order Number filter (one query per order, so no row limit applies), and summarize each order.
 // Columns are found by name or, for the item id, by value (UUIDs).
+import { AsyncLocalStorage } from "async_hooks";
 import { config } from "./config";
 import { inBatches } from "./metabase";
 import { parseRequest, buildLexiconFromRows, markPlainTag } from "./parse";
@@ -11,7 +12,11 @@ const paramCache = new Map<number, { at: number; params: Param[] }>();
 const checkCardId = () => Number(process.env.ARENA_CHECK_CARD_ID || 15214) || null; // "Overall Check" (Order Number filter)
 
 // "Arena Club Orders Raw" (filters: Order Number, Tag). ARENA_METABASE_CARD_ID overrides it.
-const cardId = () => Number(process.env.ARENA_METABASE_CARD_ID || 45739);
+// "Arena Club Customer" tile: the same tile and tools, searching customer orders through ARENA_CUSTOMER_CARD_ID instead.
+const variant = new AsyncLocalStorage<string>();
+export const useArenaCustomer = () => variant.enterWith("customer");
+export const arenaIsCustomer = () => variant.getStore() === "customer";
+const cardId = () => arenaIsCustomer() ? Number(process.env.ARENA_CUSTOMER_CARD_ID || 47455) /* "Arena Club Customer" question */ : Number(process.env.ARENA_METABASE_CARD_ID || 45739);
 async function mb(path: string, init: RequestInit = {}) {
   return fetch(`${config.metabaseHost()}${path}`, { ...init, headers: { "x-api-key": config.metabaseApiKey(), ...(init.headers || {}) } });
 }
@@ -172,6 +177,7 @@ export function orderNumbers(text: string) {
 }
 
 export async function searchArena(text: string) {
+  if (arenaIsCustomer() && !cardId()) throw new Error("Arena Club Customer isn't connected yet: set ARENA_CUSTOMER_CARD_ID in Vercel to the Metabase question for customer orders (with an Order Number filter, like 45739).");
   const t0 = Date.now();
   const raw = markPlainTag(text);
   const orders = orderNumbers(raw);

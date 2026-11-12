@@ -96,9 +96,14 @@ export const config = {
       .filter(Boolean),
 };
 
+/** One tag, or several separated by commas ("test,test2"): each lowercase letters, numbers and underscores. */
+export const splitTags = (tag: string | null | undefined) => String(tag ?? "").split(",").map((t) => t.trim()).filter(Boolean);
 export function validateTag(tag: string): string | null {
-  if (!/^[a-z0-9_]+$/.test(tag)) return "Tag must be lowercase letters, numbers and underscores only.";
+  const tags = splitTags(tag);
+  // a leading * marks the tag required, as in admin's Edit Tags ("*no_pack")
+  if (!tags.length || tags.some((t) => !/^\*?[a-z0-9_]{1,64}$/.test(t))) return "Tag must be lowercase letters, numbers and underscores only (start with * for required; separate several with commas).";
   const allow = config.tagAllowlist();
-  if (allow.length && !allow.includes(tag)) return `Tag "${tag}" is not on TAG_ALLOWLIST (${allow.join(", ")}).`;
+  const off = tags.find((t) => allow.length && !allow.includes(t.replace(/^\*/, "")));
+  if (off) return `Tag "${off}" is not on TAG_ALLOWLIST (${allow.join(", ")}).`;
   return null;
 }

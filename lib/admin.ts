@@ -66,8 +66,42 @@ export type WriteResult = { ok: boolean; status: number; returnedTag?: string | 
 export type WriteKind = "card" | "watch" | "overall" | "grades";
 const GRADE_KEYS = ["overall", "centering", "corners", "edges", "surface"] as const;
 /** Writes one field on an item: the tag (cards / watches), or the card's overall grade (kind "overall"). */
-export async function patchTag(session: AdminSession, itemId: string, tag: string | null, kind: WriteKind = "card"): Promise<WriteResult> {
+// ---------- Card tags: admin's multi-tag "Edit Tags" (captured): POST /admin/v1/items/bulk-tag ----------
+//   { ids: ["card_<id>"], add: ["no_pack"] }  or  { ids: [...], remove: ["no_pack"] }  →  { updatedCount, unchangedCount, failures }
+// A card holds several tags now: add keeps the others; remove takes off just that one. TAG_API=legacy goes back to PATCH /cards/{id} { tag }.
+export async function bulkTag(session: AdminSession, itemIds: string[], op: { add?: string[]; remove?: string[] }, prefix = "card_"): Promise<WriteResult> {
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const res = await fetch(`${config.adminApiUrl()}/admin/v1/items/bulk-tag`, { method: "POST", headers: headers(session.accessToken),
+        body: JSON.stringify({ ids: itemIds.map((id) => prefix + id), ...op }) });
+      const text = await res.text();
+      if (res.ok) {
+        let j: any = null; try { j = JSON.parse(text); } catch { /* fine */ }
+        const fails: any[] = Array.isArray(j?.failures) ? j.failures : [];
+        if (fails.length) return { ok: false, status: res.status, error: `admin: ${JSON.stringify(fails[0]).slice(0, 200)}` };
+        return { ok: true, status: res.status };
+      }
+      if ((res.status === 429 || res.status >= 500) && attempt < 3) { await new Promise((r) => setTimeout(r, 400 * attempt)); continue; }
+      return { ok: false, status: res.status, error: text.slice(0, 300) };
+    } catch (e) {
+      if (attempt === 3) return { ok: false, status: 0, error: String(e) };
+      await new Promise((r) => setTimeout(r, 400 * attempt));
+    }
+  }
+  return { ok: false, status: 0, error: "exhausted retries" };
+}
+const multiTags = () => (process.env.TAG_API || "bulk").toLowerCase() !== "legacy";
+
+export async function patchTag(session: AdminSession, itemId: string, tag: string | null, kind: WriteKind = "card", prevTag?: string | null): Promise<WriteResult> {
   if (!/^[0-9a-f-]{36}$/i.test(itemId)) return { ok: false, status: 0, error: "invalid item id" };
+  // cards: add the tag alongside the card's other tags; "remove" takes off the tag it had (prevTag)
+  if (kind === "card" && multiTags()) {
+    const list = (t: string | null | undefined) => String(t ?? "").split(",").map((x) => x.trim()).filter(Boolean);
+    if (tag) return bulkTag(session, [itemId], { add: list(tag) }); // one or several tags in one call
+    if (!list(prevTag).length) return { ok: true, status: 200 }; // nothing to take off
+    return bulkTag(session, [itemId], { remove: list(prevTag) });
+  }
+  if ((kind === "watch" || kind === "card") && tag && tag.includes(",")) return { ok: false, status: 0, error: "this item holds one tag; several tags work only with admin's multi-tag cards" };
   const path = kind === "watch" ? config.watchTagPath() : "/cards/{id}";
   if (!path) return { ok: false, status: 0, error: "WATCH_TAG_PATH is not set" };
   const url = `${config.adminApiUrl()}${path.replace("{id}", itemId)}`;

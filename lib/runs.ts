@@ -170,7 +170,7 @@ export async function stageRun(input: { run_id: string; confirm_count: number; s
 // ---------- 3. Go live: approval #2, write to admin ----------
 async function executeWrites(
   runId: string,
-  items: { item_id: string; target: string | null }[],
+  items: { item_id: string; target: string | null; prev?: string | null }[],
   okStatus: string,
   adminUserId?: string,
   kind: WriteKind = "card"
@@ -178,7 +178,7 @@ async function executeWrites(
   const session = await openAdminSession(adminUserId);
   let results: WriteResult[];
   try {
-    results = await pool(items, config.writeConcurrency(), (it) => patchTag(session, it.item_id, it.target, kind));
+    results = await pool(items, config.writeConcurrency(), (it) => patchTag(session, it.item_id, it.target, kind, it.prev));
   } finally {
     await session.revoke();
   }
@@ -231,7 +231,7 @@ export async function goLive(input: { run_id: string; confirm: boolean; approved
     throw new Error("Watch tags can't be written yet: set WATCH_TAG_PATH in Vercel (the admin path that saves a watch's tag). Dry runs work now.");
   }
 
-  const items = await q<{ item_id: string }>(`SELECT item_id FROM tag_run_items WHERE run_id=$1 AND status='pending'`, [run.id]);
+  const items = await q<{ item_id: string; previous_tag: string | null }>(`SELECT item_id, previous_tag FROM tag_run_items WHERE run_id=$1 AND status='pending'`, [run.id]);
 
   if (dry) {
     await q(`UPDATE tag_run_items SET status='would_write', updated_at=now() WHERE run_id=$1`, [run.id]);
@@ -240,7 +240,8 @@ export async function goLive(input: { run_id: string; confirm: boolean; approved
     return { run_id: run.id, status: "dry_run_completed", ...result, note: "DRY_RUN is on. Nothing was written to admin." };
   }
 
-  const res = await executeWrites(run.id, items.map((i) => ({ item_id: i.item_id, target: run.tag })), "written", input.as_admin_user_id, run.kind);
+  // remove-tag runs take off the tag each card had (cards hold several tags now; the rest stay)
+  const res = await executeWrites(run.id, items.map((i) => ({ item_id: i.item_id, target: run.tag, prev: i.previous_tag })), "written", input.as_admin_user_id, run.kind);
   const status = res.failed || res.mismatch ? "partial" : "completed";
   await q(`UPDATE tag_runs SET status=$2, finished_at=now(), result=$3 WHERE id=$1`, [run.id, status, JSON.stringify(res)]);
   return {
@@ -289,6 +290,19 @@ export async function undoRun(input: { run_id: string; confirm: boolean; request
     return { undo_run_id: undoId, undid: run.id, status: st, ...res, mismatch: 0 };
   }
   // grade runs: approve the previous grades again (only values that were known; "{}" = nothing to put back)
+  // multi-tag cards: undo an add by taking that tag off (unless the card already had it); undo a remove by adding it back
+  const multi = run.kind === "card" && (process.env.TAG_API || "bulk").toLowerCase() !== "legacy";
+  if (multi) {
+    const back = run.action === "clear"
+      ? items.filter((i) => i.previous_tag).map((i) => ({ item_id: i.item_id, target: i.previous_tag, prev: null }))
+      : items.map((i) => ({ item_id: i.item_id, target: null, prev: (run.tag ?? "").split(",").map((t) => t.trim().replace(/^\*/, "")).filter((t) => t && t !== String(i.previous_tag ?? "").replace(/^\*/, "")).join(",") }))
+          .filter((x) => x.prev); // each added tag comes off again, except one the card already had
+    const r = await executeWrites(undoId, back, "restored", input.as_admin_user_id, run.kind);
+    const st = r.failed || r.mismatch ? "partial" : "completed";
+    await q(`UPDATE tag_runs SET status=$2, finished_at=now(), result=$3 WHERE id=$1`, [undoId, st, JSON.stringify(r)]);
+    await q(`UPDATE tag_runs SET status='undone' WHERE id=$1 AND $2 = 'completed'`, [run.id, st]);
+    return { undo_run_id: undoId, undid: run.id, status: st, ...r };
+  }
   const restore = run.kind === "grades" ? items.filter((i) => i.previous_tag && i.previous_tag !== "{}") : items;
   const res = run.kind === "grades"
     ? await writeGrades(undoId, restore.map((i) => ({ item_id: i.item_id, grades: JSON.parse(i.previous_tag as string) })), "restored", input.as_admin_user_id, input.requested_by)

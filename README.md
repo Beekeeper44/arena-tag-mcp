@@ -183,3 +183,17 @@ An edge's "none" is no annotations (`labels: []`). Undo puts each edge's annotat
 ### Surface → none
 
 ① Remove subgrades task → **Surface** overrides front and back surface under the TAG-BOT user's name (captured from admin's surface Review Override). It's **one step**: `POST /grades/surface { grade: { kind:"review", status:"reviewer_override", labels: [], side, cardId, gradingTaskId, pictureId, graderId, userId, name, cardSize, score fields, notes:[{kind:"review", note:""}] }, croppedAt: null }`. There's no approve PATCH; admin's own surface overrides stay at `reviewer_override`. Undo puts each side's annotations back.
+
+## Card tags (multi-tag)
+
+Cards hold several tags now (admin's **Edit Tags**). TAG-BOT writes card tags the same way, captured from admin:
+
+- **Add tag:** `POST /admin/v1/items/bulk-tag { ids: ["card_<id>"], add: ["<tag>", ...] }`. Adds the tag(s) and keeps the card's other tags. Type several in the tag box separated by commas; start a tag with `*` to add it as required (`*no_pack`), exactly as admin sends it.
+- **Remove tag:** `POST /admin/v1/items/bulk-tag { ids: [...], remove: ["<tag>"] }`. Takes off just that tag.
+- **Undo:** an add is undone by removing that tag (skipped on cards that already had it); a remove is undone by adding it back.
+
+The response is `{ updatedCount, unchangedCount, failures }`; any failure marks the card failed. Set `TAG_API=legacy` to go back to the old single-tag `PATCH /cards/{id} { tag }`. Watches still use `WATCH_TAG_PATH` (one tag).
+
+## Arena Club Customer tile
+
+Same tile and tools as **Arena Club** (order search, overall check, grade editor, Grades row, status changes, tags), but it searches **customer** orders through Metabase question **47455** (Arena Club Customer; `ARENA_CUSTOMER_CARD_ID` overrides it) instead of 45739. It needs the same Order Number filter. The Overall Check (15214) is shared.

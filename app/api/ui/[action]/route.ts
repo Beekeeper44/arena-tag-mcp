@@ -4,7 +4,7 @@ import { searchArchived } from "@/lib/archived";
 import { runArchivedStatus, undoArchivedStatus } from "@/lib/archived-status";
 import { type CardFilters, type PostFilters } from "@/lib/metabase";
 import { runSelection, runWatchSelection, runArenaSelection, runArchivedSelection, runOverallUpdate, runGradeUpdate, runCornersNone, undoRun, listRuns } from "@/lib/runs";
-import { searchArena } from "@/lib/arena";
+import { searchArena, useArenaCustomer } from "@/lib/arena";
 import { openAdminSession, liveCards, liveWatches } from "@/lib/admin";
 import { listPrompts, addPrompt, renamePrompt, deletePrompt } from "@/lib/ui";
 import {
@@ -72,6 +72,7 @@ export async function POST(req: Request, ctx: Ctx) {
   }
 
   const str = (k: string) => String(body[k] ?? "").trim();
+  if (body.arena_variant === "customer") useArenaCustomer(); // Arena Club Customer tile: customer-orders question for this request
   if (action === "logout") return json({ ok: true }, 200, { "Set-Cookie": clearCookie() });
   try {
     if (action === "login") {
