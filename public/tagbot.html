@@ -1011,7 +1011,7 @@ async function demoApi(path,body){
   }
   if(path==="undo") return {ok:true,restored:0};
   if(path==="grades"){ const ids=(body.items||[]).map(x=>x.item_id); return {run_id:"demo",status:body.dry_run?"dry_run_completed":"completed",dry_run:!!body.dry_run,would_write:ids.length,written_ids:body.dry_run?[]:ids,succeeded:body.dry_run?0:ids.length,failed:0,mismatch:0,approved:ids.length,rebuilt:ids.length,failures:[]}; }
-  if(path==="corners"){ const ids=body.item_ids||[], ed=(body.parts||[]).includes("edge")?["edge top","edge bottom","edge left","edge right"]:[], co=(body.parts||["corner"]).includes("corner")?["top_left","top_right","bottom_left","bottom_right"]:[], cards=ids.map((id,i)=>({item_id:id,changed:[...co,...ed],corners_before:9,corners_after:i%3===2?9:9.5,overall:9}));
+  if(path==="corners"){ const ids=body.item_ids||[], ed=[...((body.parts||[]).includes("edge")?["edge top","edge bottom","edge left","edge right"]:[]),...((body.parts||[]).includes("surface")?["surface front","surface back"]:[])], co=(body.parts||["corner"]).includes("corner")?["top_left","top_right","bottom_left","bottom_right"]:[], cards=ids.map((id,i)=>({item_id:id,changed:[...co,...ed],corners_before:9,corners_after:i%3===2?9:9.5,overall:9}));
     return {run_id:"demo",dry_run:!!body.dry_run,cards,succeeded:body.dry_run?0:cards.filter(c=>c.changed.length).length,failed:0,would_write:body.dry_run?cards.filter(c=>c.changed.length).length:undefined,written_ids:[],failures:[]}; }
   if(path==="live"){ const out={}, ids=(body&&body.ids)||[]; for(const list of Object.values(DEMO_DB)) for(const c of list) if(ids.includes(c.item_id)&&!out[c.item_id]) out[c.item_id]={status:c.status,authenticationStatus:c.auth_status,tag:c.tag,archivedAt:c.archived_at||null,rescanRequestedAt:c.rescan_at||null,boxLabel:c.in_box||null}; return out; }
   return {};
@@ -1098,8 +1098,8 @@ function statusActions(locked){
 // Apply: the zeros go through the usual Save & approve; then ③ Corners runs the corner Review Override → none (cornersNone).
 // ③ Centering / Edges / Surface aren't connected yet (need Review Override captures).
 const G_SUBS=[["centering","Centering"],["corners","Corners"],["edges","Edges"],["surface","Surface"]];
-const G_TASK_READY=new Set(["corners","edges"]);
-const gParts=()=>{ const g=gPlan(); return [...(g.tsubs.has("corners")?["corner"]:[]),...(g.tsubs.has("edges")?["edge"]:[])]; };
+const G_TASK_READY=new Set(["corners","edges","surface"]);
+const gParts=()=>{ const g=gPlan(); return [...(g.tsubs.has("corners")?["corner"]:[]),...(g.tsubs.has("edges")?["edge"]:[]),...(g.tsubs.has("surface")?["surface"]:[])]; };
 function gPlan(){ return S.gp||(S.gp={overall:false,clear:false,task:false,subs:new Set(),tsubs:new Set()}); }
 function gTaskOn(){ const g=gPlan(); return g.task&&[...g.tsubs].some(k=>G_TASK_READY.has(k)); }
 function gActive(){ const g=gPlan(); return g.overall||(g.clear&&g.subs.size>0)||gTaskOn(); }
@@ -1112,7 +1112,7 @@ function gradesRow(locked){
   </div>
   ${g.task?`<div class="sact" role="group" aria-label="Subgrade tasks to remove"><span class="dim small"><span class="gstep">1</span>Remove:</span>
     <span class="sagrp">${G_SUBS.map(([k,l])=>G_TASK_READY.has(k)?pill(`data-gt="${k}"`,g.tsubs.has(k),l,""," tsub"):pill(`data-gt="${k}"`,false,l+" (soon)",""," tsub",true,"Needs a Review Override capture for "+l.toLowerCase())).join("")}</span>
-    <span class="dim small">Review Override to <b>None</b> (edges: annotations removed) and approve</span></div>`:""}
+    <span class="dim small">Review Override to <b>None</b> (edges / surface: annotations removed), under your name</span></div>`:""}
   ${g.clear?`<div class="sact" role="group" aria-label="Subgrades to clear"><span class="dim small"><span class="gstep">2</span>Clear:</span>
     <span class="sagrp">${G_SUBS.map(([k,l])=>pill(`data-gs="${k}"`,g.subs.has(k),l)).join("")}</span>
     <span class="dim small">lit = set to 0 · click one to keep its original number</span></div>`:""}`;
@@ -1140,7 +1140,7 @@ async function gApply(){
     return `<li><span><b>${esc(c.player_name||"")}</b> <span class="dim">AC ${esc(c.ac||"")}</span><br>${Object.entries(o).map(([k,v])=>`${lab[k]} ${gNow(c,k)??"–"} → <b>${v}</b>`).join(" · ")}</span></li>`; });
   // one confirm for everything; then it runs straight through, no more popups
   const ok=await ask({title:`Apply to ${sel.length} card${sel.length===1?"":"s"} in admin?`,
-    body:`${dry?"<b>Dry run:</b> nothing is written.<br><br>":""}${corners?`<div class="planline"><b>1 · ${gParts().map(p=>p[0].toUpperCase()+p.slice(1)+"s").join(" + ")} → none</b><br>${gParts().includes("corner")?"All four corners get a Review Override with every annotation at <b>none</b>":""}${gParts().length>1?"; ":""}${gParts().includes("edge")?"all four edges get a Review Override with their annotations <b>removed</b>":""}, approved under your name.</div>`:""}
+    body:`${dry?"<b>Dry run:</b> nothing is written.<br><br>":""}${corners?`<div class="planline"><b>1 · ${gParts().map(p=>p[0].toUpperCase()+p.slice(1)+"s").join(" + ")} → none</b><br>${gParts().includes("corner")?"All four corners get a Review Override with every annotation at <b>none</b>":""}${gParts().includes("corner")&&gParts().length>1?"; ":""}${gParts().includes("edge")?"all four edges get a Review Override with their annotations <b>removed</b>":""}${gParts().includes("edge")&&gParts().includes("surface")?"; ":""}${gParts().includes("surface")?"front and back surface get a Review Override with their annotations <b>removed</b> (saved as an override, like admin)":""}. All under your name.</div>`:""}
       ${zeros?`<div class="planline"><b>${corners?"2":"1"} · Grades → 0</b>, then approved (label and slab rebuilt)<ul class="taglist gl">${zl.join("")}</ul></div>`:""}
       <div class="dim small">Runs in this order. Each step can be undone from Recent runs.</div>`,
     yes:dry?"Run dry run":"Yes, apply"});

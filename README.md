@@ -179,3 +179,7 @@ Above Change status, in run order: **① Remove subgrades task** (corners Review
 | Approve | `PATCH /grades/edge/{id} { status:"approved", labels: [], notes:[{note:"Edge Auto Approved"}] }` (if that body isn't accepted, it's sent wrapped in `grade`) |
 
 An edge's "none" is no annotations (`labels: []`). Undo puts each edge's annotations back.
+
+### Surface → none
+
+① Remove subgrades task → **Surface** overrides front and back surface under the TAG-BOT user's name (captured from admin's surface Review Override). It's **one step**: `POST /grades/surface { grade: { kind:"review", status:"reviewer_override", labels: [], side, cardId, gradingTaskId, pictureId, graderId, userId, name, cardSize, score fields, notes:[{kind:"review", note:""}] }, croppedAt: null }`. There's no approve PATCH; admin's own surface overrides stay at `reviewer_override`. Undo puts each side's annotations back.

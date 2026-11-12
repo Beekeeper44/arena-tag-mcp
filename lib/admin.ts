@@ -494,3 +494,38 @@ export async function overrideEdge(session: AdminSession, cardId: string, e: Edg
   if ((ok?.grade ?? ok)?.status !== "approved") throw new Error(`edge ${e.side}: override saved but not approved (admin shows "${(ok?.grade ?? ok)?.status ?? "?"}")`);
   return id as string;
 }
+
+// ---------- Surface → none: the surface "Review Override", captured from admin (one step, no approve) ----------
+//   POST /grades/surface { grade: { kind:"review", status:"reviewer_override", labels: [], side, cardId, gradingTaskId, pictureId,
+//                                   graderId, userId, name, cardSize, score fields, notes:[{kind:"review", note:""}], timing }, croppedAt: null }
+// The grade stays at "reviewer_override" (that's how admin's own surface overrides end up); surface "none" = no annotations.
+export type SurfaceNow = { taskId: string; side: string; labels: CornerLabel[]; pictureId: string | null; cardSize: unknown; scores: Record<string, unknown> };
+const SURFACE_SIDES = ["front", "back"];
+const SURFACE_SCORE_KEYS = ["expectedScore", "expectedDeductionScore", "expectedOverlapScore", "expectedKindScore", "score", "deductionScore", "overlapScore", "kindScore"];
+export async function surfacesNow(session: AdminSession, cardId: string): Promise<SurfaceNow[]> {
+  const j = await adminJson(session, `/grading_tasks?where=card_id=${cardId}`);
+  const tasks: any[] = Array.isArray(j?.data) ? j.data : Array.isArray(j) ? j : [];
+  const out: SurfaceNow[] = [];
+  for (const t of tasks) {
+    if (t?.kind !== "surface" || !SURFACE_SIDES.includes(t.side)) continue;
+    const gs: any[] = (Array.isArray(t.grades) ? t.grades : []).slice().sort((a: any, b: any) => String(b.createdAt).localeCompare(String(a.createdAt)));
+    const g = gs.find((x) => x.status === "approved" || x.status === "reviewer_override") ?? gs[0];
+    if (!g) continue;
+    const geo = gs.find((x) => x.cardSize) ?? g;
+    out.push({ taskId: t.id, side: t.side, labels: (Array.isArray(g.labels) ? g.labels : []) as CornerLabel[], pictureId: g.pictureId ?? null, cardSize: geo.cardSize ?? null,
+      // admin sends these as they stood (0 / 4 / 0 / 0 on every override seen); copy them rather than invent
+      scores: Object.fromEntries(SURFACE_SCORE_KEYS.map((k) => [k, g[k] ?? (k === "deductionScore" ? 4 : 0)])) });
+  }
+  return out.sort((a, b) => SURFACE_SIDES.indexOf(a.side) - SURFACE_SIDES.indexOf(b.side));
+}
+export async function overrideSurface(session: AdminSession, cardId: string, s: SurfaceNow, labels: CornerLabel[], who: { userId: string; graderId: string; name: string }) {
+  const startedAt = new Date().toISOString(), finishedAt = new Date().toISOString();
+  const created = await adminJson(session, "/grades/surface", "POST", { croppedAt: null, grade: {
+    cardId, cardSize: s.cardSize, duration: 0, expectedAccuracy: null, finishedAt, graderId: who.graderId, gradingTaskId: s.taskId, kind: "review", labels, name: who.name,
+    notes: [{ kind: "review", name: who.name, note: "", userId: who.userId, graderId: who.graderId, createdAt: finishedAt }],
+    pictureId: s.pictureId, side: s.side, startedAt, status: "reviewer_override", tags: null, userId: who.userId, verificationDuration: null, ...s.scores } });
+  const g = created?.grade ?? created;
+  if (!g?.id) throw new Error(`surface ${s.side}: admin didn't return the new surface grade`);
+  if (g.status && g.status !== "reviewer_override" && g.status !== "approved") throw new Error(`surface ${s.side}: admin saved it as "${g.status}"`);
+  return g.id as string;
+}
