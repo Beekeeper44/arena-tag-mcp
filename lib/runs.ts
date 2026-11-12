@@ -31,7 +31,7 @@ const hoursFromNow = (h: number) => new Date(Date.now() + h * 3600_000).toISOStr
 function applyMode<T extends { tag: string | null }>(rows: T[], action: "set" | "clear", tag: string | null, mode: string) {
   // Drop no-ops, and (in skip_tagged mode) anything that already carries a different tag.
   return rows.filter((r) => {
-    if (action === "clear") return !!r.tag;
+    if (action === "clear") return tag ? true : !!r.tag; // named tags: every selected card (admin skips cards without them)
     if (r.tag === tag) return false;
     if (mode === "skip_tagged" && r.tag) return false;
     return true;
@@ -67,8 +67,8 @@ export async function previewRun(input: {
   requested_by: string;
 }) {
   const action = input.action;
-  const tag = action === "clear" ? null : (input.tag ?? "").trim();
-  if (action === "set") {
+  const tag = action === "clear" ? ((input.tag ?? "").trim() || null) : (input.tag ?? "").trim();
+  if (action === "set" || tag) {
     const err = validateTag(tag as string);
     if (err) throw new Error(err);
   }
@@ -241,7 +241,8 @@ export async function goLive(input: { run_id: string; confirm: boolean; approved
   }
 
   // remove-tag runs take off the tag each card had (cards hold several tags now; the rest stay)
-  const res = await executeWrites(run.id, items.map((i) => ({ item_id: i.item_id, target: run.tag, prev: i.previous_tag })), "written", input.as_admin_user_id, run.kind);
+  const named = run.action === "clear" && !!run.tag; // Remove tag with typed tags: take those off; target stays null
+  const res = await executeWrites(run.id, items.map((i) => ({ item_id: i.item_id, target: named ? null : run.tag, prev: named ? run.tag : i.previous_tag })), "written", input.as_admin_user_id, run.kind);
   const status = res.failed || res.mismatch ? "partial" : "completed";
   await q(`UPDATE tag_runs SET status=$2, finished_at=now(), result=$3 WHERE id=$1`, [run.id, status, JSON.stringify(res)]);
   return {
@@ -294,7 +295,7 @@ export async function undoRun(input: { run_id: string; confirm: boolean; request
   const multi = run.kind === "card" && (process.env.TAG_API || "bulk").toLowerCase() !== "legacy";
   if (multi) {
     const back = run.action === "clear"
-      ? items.filter((i) => i.previous_tag).map((i) => ({ item_id: i.item_id, target: i.previous_tag, prev: null }))
+      ? items.filter((i) => run.tag || i.previous_tag).map((i) => ({ item_id: i.item_id, target: run.tag || i.previous_tag, prev: null })) // put back what was removed
       : items.map((i) => ({ item_id: i.item_id, target: null, prev: (run.tag ?? "").split(",").map((t) => t.trim().replace(/^\*/, "")).filter((t) => t && t !== String(i.previous_tag ?? "").replace(/^\*/, "")).join(",") }))
           .filter((x) => x.prev); // each added tag comes off again, except one the card already had
     const r = await executeWrites(undoId, back, "restored", input.as_admin_user_id, run.kind);
@@ -371,8 +372,8 @@ export async function runSelection(input: {
   as_admin_user_id?: string; // write as this person's own admin login
 }) {
   const action = input.action;
-  const tag = action === "clear" ? null : (input.tag ?? "").trim();
-  if (action === "set") {
+  const tag = action === "clear" ? ((input.tag ?? "").trim() || null) : (input.tag ?? "").trim();
+  if (action === "set" || tag) {
     const err = validateTag(tag as string);
     if (err) throw new Error(err);
   }
@@ -425,8 +426,8 @@ export async function runWatchSelection(input: {
   as_admin_user_id?: string;
 }) {
   const action = input.action;
-  const tag = action === "clear" ? null : (input.tag ?? "").trim();
-  if (action === "set") {
+  const tag = action === "clear" ? ((input.tag ?? "").trim() || null) : (input.tag ?? "").trim();
+  if (action === "set" || tag) {
     const err = validateTag(tag as string);
     if (err) throw new Error(err);
   }
@@ -465,8 +466,8 @@ export async function runArenaSelection(input: {
   item_ids: string[]; dry_run?: boolean; user: string; as_admin_user_id?: string;
 }) {
   const action = input.action;
-  const tag = action === "clear" ? null : (input.tag ?? "").trim();
-  if (action === "set") { const err = validateTag(tag as string); if (err) throw new Error(err); }
+  const tag = action === "clear" ? ((input.tag ?? "").trim() || null) : (input.tag ?? "").trim();
+  if (action === "set" || tag) { const err = validateTag(tag as string); if (err) throw new Error(err); }
   const wanted = [...new Set(input.item_ids)];
   if (!wanted.length) throw new Error("No cards selected.");
   if (wanted.length > config.maxItemsPerRun()) throw new Error(`${wanted.length} cards is over the ${config.maxItemsPerRun()}-item limit.`);
@@ -498,8 +499,8 @@ export async function runArchivedSelection(input: {
   item_ids: string[]; dry_run?: boolean; user: string; as_admin_user_id?: string;
 }) {
   const action = input.action;
-  const tag = action === "clear" ? null : (input.tag ?? "").trim();
-  if (action === "set") { const err = validateTag(tag as string); if (err) throw new Error(err); }
+  const tag = action === "clear" ? ((input.tag ?? "").trim() || null) : (input.tag ?? "").trim();
+  if (action === "set" || tag) { const err = validateTag(tag as string); if (err) throw new Error(err); }
   const wanted = [...new Set(input.item_ids)];
   if (!wanted.length) throw new Error("No cards selected.");
   if (wanted.length > config.maxItemsPerRun()) throw new Error(`${wanted.length} cards is over the ${config.maxItemsPerRun()}-item limit.`);

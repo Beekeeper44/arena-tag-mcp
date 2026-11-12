@@ -197,3 +197,7 @@ The response is `{ updatedCount, unchangedCount, failures }`; any failure marks 
 ## Arena Club Customer tile
 
 Same tile and tools as **Arena Club** (order search, overall check, grade editor, Grades row, status changes, tags), but it searches **customer** orders through Metabase question **47455** (Arena Club Customer; `ARENA_CUSTOMER_CARD_ID` overrides it) instead of 45739. It needs the same Order Number filter. The Overall Check (15214) is shared.
+
+### Tag box workflow (cards)
+
+One tag box for **Add tag** and **Remove tag**: type tags (Enter or comma makes a pill), pick Add or Remove, then **Apply to admin** / **Remove in admin** for the selected cards. The cards, your selection and the typed tags all stay on screen afterwards, so you can add or remove again straight away. Remove with typed tags sends `remove: [...]` for just those tags (cards without them are left alone); undo adds them back.

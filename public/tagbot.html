@@ -382,6 +382,13 @@ h1 span{color:var(--go)}
 .seg{display:inline-flex;gap:6px}
 .seg button{border:1px solid var(--line);border-radius:999px;background:transparent;padding:7px 14px;cursor:pointer;color:var(--dim);font-weight:700}
 .seg button:hover{border-color:var(--go);color:var(--text)}
+/* Remove tag pill: light red */
+.chipbox.rmbox{border-color:#ff8a80}
+.chipbox.rmbox .tchip{border-color:#ff8a80;color:#ff8a80}
+.chipbox.rmbox .tchip.req{background:#ff8a80;color:#2a0a08}
+.seg button[data-a="clear"]{border-color:#ff8a80;color:#ff8a80}
+.seg button[data-a="clear"]:hover{border-color:#ffb3ad;color:#ffb3ad}
+.seg button[data-a="clear"][aria-pressed="true"]{background:#ff8a80;border-color:#ff8a80;color:#2a0a08}
 .seg button[aria-pressed="true"]{background:var(--go);color:var(--go-ink);font-weight:700}
 .tagfield{display:flex;align-items:center;border:1.5px solid var(--go);border-radius:8px;padding:0 10px;background:var(--bg)}
 .tagfield input{border:0;background:transparent;padding:8px 0;font-weight:700;font-size:16px;width:min(260px,52vw);outline:none}
@@ -438,6 +445,8 @@ dialog.info{max-width:760px;width:calc(100% - 32px);padding:0}
 .pill.new{border-color:var(--go);color:var(--go)}
 /* required tag (*name): filled green, like admin's Edit Tags */
 .reqtog input{accent-color:var(--go)}
+.pill.cur{border-color:var(--line);color:var(--text)}
+.pill.cur.req{background:color-mix(in srgb,var(--go) 30%,transparent);border-color:var(--go);color:var(--text)}
 .pill.req{background:var(--go);border-color:var(--go);color:var(--go-ink,#04120a);font-weight:700}
 .pill.req::after{content:" · required";font-weight:500;opacity:.8}
 .pill.old{border-color:var(--warn);color:var(--warn);text-decoration:line-through}
@@ -870,11 +879,15 @@ function readRequest(text){
 const like=(v,q)=>{if(v==null)return false; const parts=String(q).toLowerCase().split("%"); let s=String(v).toLowerCase(),i=0; for(const p of parts){const j=s.indexOf(p,i); if(j<0)return false; i=j+p.length} return true};
 // Remove tag: picked tags win; otherwise whatever is typed in the tag search narrows to tags containing it
 function applyMode(rows,action,tag,mode,rm,rmq){
+  if(action==="clear"&&tag) return rows; // Remove with typed tags: every card stays; the selected ones lose those tags
+  if(action==="set") return rows.filter(r=>!(mode==="skip_tagged"&&r.tag)); // cards stay after tagging (they hold several tags)
   const q=String(rmq||"").toLowerCase().trim().replace(/[\s,]+/g,"_");
-  return rows.filter(r=>action==="clear"
-    ?(!!r.tag&&(rm&&rm.length?rm.includes(r.tag.toLowerCase()):(!q||r.tag.toLowerCase().includes(q))))
-    :(r.tag!==tag&&!(mode==="skip_tagged"&&r.tag)));
+  return rows.filter(r=>!!r.tag&&(rm&&rm.length?rm.includes(r.tag.toLowerCase()):(!q||r.tag.toLowerCase().includes(q))));
 }
+// card tag lists (comma-joined, *name = required) after adding / removing tags by name
+const tagList=t=>String(t||"").split(",").map(x=>x.trim()).filter(Boolean), tagBase=t=>t.replace(/^\*/,"");
+const addTags=(cur,add)=>{ const l=tagList(cur).filter(x=>!tagList(add).some(a=>tagBase(a)===tagBase(x))); return [...l,...tagList(add)].join(",")||null; };
+const dropTags=(cur,rm)=>{ const b=tagList(rm).map(tagBase); return tagList(cur).filter(x=>!b.includes(tagBase(x))).join(",")||null; };
 
 /* ---------- state ---------- */
 const $=s=>document.querySelector(s);
@@ -1635,11 +1648,11 @@ function renderInner(){
           <button type="button" data-a="set" aria-pressed="${S.action==="set"}" ${locked?"disabled":""}>Add tag</button>
           <button type="button" data-a="clear" aria-pressed="${S.action==="clear"}" ${locked?"disabled":""}>Remove tag</button>
         </div>
-        ${S.action==="set"?`<div class="tagfield chipbox" role="group" aria-label="Tags to add">${tagChips().map((t,i)=>`<span class="tchip${t.startsWith("*")?" req":""}" title="${t.startsWith("*")?"required tag":"tag"}">${esc(t.replace(/^\*/,""))}${t.startsWith("*")?` <span class="small" style="opacity:.75">required</span>`:""}<button type="button" data-rmchip="${i}" aria-label="Remove ${esc(t)}" ${locked?"disabled":""}>×</button></span>`).join("")}<input autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" data-lpignore="true" data-1p-ignore="true" data-bwignore="true" data-form-type="other" id="tagIn" aria-label="Type a tag, press Enter" value="${esc(S.tagDraft||"")}" placeholder="${tagChips().length?"add another…":"type a tag, press Enter"}" ${locked?"disabled":""}></div>`:`<label class="tagfield rmfield"><input id="rmIn" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" data-lpignore="true" data-1p-ignore="true" data-bwignore="true" data-form-type="other" aria-label="Search tags to remove" placeholder="Search tags to remove…" value="${esc(S.rmq)}" autocomplete="off" ${locked?"disabled":""}></label>`}
+        <div class="tagfield chipbox${S.action==="clear"?" rmbox":""}" role="group" aria-label="Tags to add">${tagChips().map((t,i)=>`<span class="tchip${t.startsWith("*")?" req":""}" title="${t.startsWith("*")?"required tag":"tag"}">${esc(t.replace(/^\*/,""))}${t.startsWith("*")?` <span class="small" style="opacity:.75">required</span>`:""}<button type="button" data-rmchip="${i}" aria-label="Remove ${esc(t)}" ${locked?"disabled":""}>×</button></span>`).join("")}<input autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" data-lpignore="true" data-1p-ignore="true" data-bwignore="true" data-form-type="other" id="tagIn" aria-label="Type a tag, press Enter" value="${esc(S.tagDraft||"")}" placeholder="${tagChips().length?"add another…":S.action==="clear"?"type the tag to remove, press Enter":"type a tag, press Enter"}" ${locked?"disabled":""}></div>
         ${S.action==="set"&&NOUN()!=="watches"?`<label class="tog reqtog"><input type="checkbox" id="reqT" ${tagsReq(S.tag)?"checked":""} ${locked?"disabled":""}> Required tag <span class="dim small">(same as typing * in front)</span></label>`:""}
         <label class="tog"><input type="checkbox" id="skipT" ${S.mode==="skip_tagged"?"checked":""} ${locked||S.action==="clear"?"disabled":""}> Skip ${NOUN()} that already have a tag</label>
       </div>
-      ${S.action==="clear"?rmChips(locked):""}
+      ${S.action==="clear"&&!S.tag?rmChips(locked):""}
       ${S.orders?orderBox(locked):""}
       ${ARCHK(S.kind)?statusChips(locked):""}
       <div class="chips">${chips}</div>
@@ -1702,7 +1715,7 @@ function tile(r){
     change=`<div class="nowline"><span class="dim">${S.dry?"would be":"now"}</span> ${nowHtml}</div>${wasHtml?`<div class="nowline">${wasHtml}</div>`:""}`;
   }
   else if(S.action==="clear") change=`<span class="pill old">${esc(r.tag)}</span><span class="dim">→ no tag</span>`;
-  else change=`${r.tag?`<span class="pill${NOUN()==="watches"?" old":""}">${esc(r.tag)}</span>`:""}${S.tag?tagPills(S.tag):`<span class="pill new">tag</span>`}`; // cards keep their other tags
+  else change=`${r.tag?(NOUN()==="watches"?`<span class="pill old">${esc(r.tag)}</span>`:tagPills(r.tag,"cur")):""}${S.tag?tagPills(S.tag):`<span class="pill new">tag</span>`}`; // cards keep their other tags
   if(r.kind==="watch") return watchTile(r,on,change);
   // Archived Cards / Watches pills: same tile as the Cards / Watches tiles, plus the archive rows
   if(r.kind==="archived"&&r.view==="arch_watches") return arenaTile(r,withArch(watchTile(asWatch(r),on,change),r));
@@ -1770,7 +1783,7 @@ function archTile(r,on,change){
     +row("Value",esc(r.value_range||""))+row("Side",x.side?`<span class="aside">${esc(x.side)}</span>`:"")+row("Issue",x.issue?`<b>${esc(x.issue)}</b>`:"",x.issue)
     +row("Note",x.note?esc(x.note)+(more>0?` <span class="dim">(+${more})</span>`:""):"",x.note)+row("Logged",logged?esc(logged)+" PT":"");
   const ids=row("Card",r.card_url?`<span class="alink clickme" role="link" tabindex="0" data-href="${esc(r.card_url)}" title="Open card in admin">Click Me</span>`:"")
-    +row("Tag",r.tag?`<b>${esc(r.tag)}</b>`:'<span class="dim">no tag</span>',r.tag)
+    +row("Tag",r.tag?tagPills(r.tag,"cur"):'<span class="dim">no tag</span>',r.tag)
     +`<dt>Order</dt><dd>${r.order_number?`<b>${esc(r.order_number)}</b>${cp(r.order_number)}`:dash}</dd>`;
   return `<div class="tw"><button type="button" class="infob" data-info="${esc(r.item_id)}" aria-label="Details for ${esc(r.player_name)}" title="Details">i</button><button type="button" class="tile wtile atile" data-id="${r.item_id}" aria-pressed="${on}" ${S.phase!=="review"?"disabled":""} aria-label="${esc(r.player_name)} ${esc(r.set_name)}">
     <span class="check" aria-hidden="true">${on?"✓":""}</span>
@@ -2035,18 +2048,18 @@ function renderBar(n,replacing){
     return;
   }
   if(S.phase==="review"){
-    const bad=S.action==="set"&&!TAGS_OK(S.tag);
+    const bad=(S.action==="set"||S.tag)&&!TAGS_OK(S.tag);
     const CAP=window.MAX_ITEMS||1000;
     cb.hidden=false; cb.disabled=!n||bad||n>CAP;
     cb.textContent=S.action==="set"?`Apply to admin (${n})`:`Remove in admin (${n})`;
     cb.className="btn big "+(S.action==="set"?"primary":"danger");
     msg.innerHTML=bad?`<span style="color:var(--warn)">Enter a tag: lowercase letters, numbers and underscores. Start with * for required; separate several with commas.</span>`:n>CAP?`<span style="color:var(--warn)">${n.toLocaleString()} cards is over the ${CAP.toLocaleString()}-card limit. Deselect some or narrow the request.</span>`:
-      `<b>${n}</b> ${n===1?NOUN().replace(/s$/,""):NOUN()} will ${S.action==="set"?`get the tag${S.tag.includes(",")?"s":""} <b>${esc(S.tag.split(",").join(", "))}</b>`:`have ${n===1?"its":"their"} tag removed`}${replacing?(NOUN()==="watches"?` · ${replacing} replace an existing tag`:` · ${replacing} keep their other tags`):""}`;
+      `<b>${n}</b> ${n===1?NOUN().replace(/s$/,""):NOUN()} will ${S.action==="set"?`get the tag${S.tag.includes(",")?"s":""} <b>${esc(S.tag.split(",").join(", "))}</b>`:(S.tag?`have <b>${esc(S.tag.split(",").join(", "))}</b> removed`:`have ${n===1?"its":"their"} tag removed`)}${replacing?(NOUN()==="watches"?` · ${replacing} replace an existing tag`:` · ${replacing} keep their other tags`):""}`;
     if(document.body.classList.contains("readonly")) msg.innerHTML+=` · <span style="color:var(--warn)">View only — your login can't save tags. Ask an admin in Users to give you edit access.</span>`;
   }
 }
 function bindSummary(){
-  document.querySelectorAll(".seg button").forEach(b=>b.onclick=()=>{S.action=b.dataset.a;recompute(true)});
+  document.querySelectorAll(".seg button").forEach(b=>b.onclick=()=>{S.action=b.dataset.a;recompute(false)}); // keep the cards you picked
   // several tags: separate with commas ("test, test2" → test,test2); spaces inside a tag become _
   const ti=$("#tagIn");
   const refocus=()=>{ const n=$("#tagIn"); if(n){ n.focus(); n.setSelectionRange(n.value.length,n.value.length); } };
@@ -2146,12 +2159,13 @@ $("#confirmBtn").onclick=async()=>{
   let ok;
   if(S.action==="set"){
     const rep=sel.filter(r=>r.tag&&r.tag!==S.tag).length;
-    ok=await ask({title:`Tag ${sel.length} cards as ${S.tag}?`,
-      body:`${dryNote}${rep?`${rep} of them currently have another tag that will be replaced:`+tagCounts(sel.filter(r=>r.tag&&r.tag!==S.tag))+"<br>":""}You can undo this afterward.`,
+    const multiT=NOUN()!=="watches";
+    ok=await ask({title:`Tag ${sel.length} cards as ${S.tag.split(",").join(", ")}?`,
+      body:`${dryNote}${multiT?"Added alongside each card's other tags. ":rep?`${rep} of them currently have another tag that will be replaced:`+tagCounts(sel.filter(r=>r.tag&&r.tag!==S.tag))+"<br>":""}You can undo this afterward.`,
       yes:dry?"Run dry run":"Yes, tag them"});
   }else{
-    ok=await ask({title:`Remove tags from ${sel.length} cards?`,
-      body:`${dryNote}These tags will be removed:${tagCounts(sel)}<br>The ${NOUN()} will have no tag afterward. You can undo this.`,
+    ok=await ask({title:S.tag?`Remove ${S.tag.split(",").join(", ")} from ${sel.length} cards?`:`Remove tags from ${sel.length} cards?`,
+      body:S.tag?`${dryNote}Takes <b>${esc(S.tag.split(",").join(", "))}</b> off the selected ${NOUN()}; their other tags stay. Cards without it are left as they are. You can undo this.`:`${dryNote}These tags will be removed:${tagCounts(sel)}<br>The ${NOUN()} will have no tag afterward. You can undo this.`,
       yes:dry?"Run dry run":"Yes, remove tags", danger:!dry, word:dry?null:String(sel.length)});
   }
   if(ok) run(sel,dry);
@@ -2159,22 +2173,26 @@ $("#confirmBtn").onclick=async()=>{
 
 async function run(sel,dry){
   S.phase="working"; S.undone=false; S.showAll=false; S.prevAll=new Map(sel.map(r=>[r.item_id,r.tag])); render(); $("#dryWrap").hidden=true;
-  const target=S.action==="set"?S.tag:null;
+  const target=S.action==="set"?S.tag:(S.tag||null); // Remove: the typed tags (blank = each card's own tag)
   $("#confirmBtn").hidden=true;
   $("#barmsg").innerHTML=`<span class="spin"></span>${dry?"Dry run":"Writing to admin"}… ${sel.length.toLocaleString()} cards${!dry&&sel.length>200?` (about ${Math.ceil(sel.length*0.2/5)}s — keep this tab open)`:""}`;
   let res;
   try{
     res=await api("apply",{kind:S.kind,view:S.view,text:S.text,filters:S.filters,queries:S.queries,post_filters:S.post,action:S.action,tag:target,mode:S.mode,item_ids:sel.map(r=>r.item_id),dry_run:dry});
+    S.lastAction=S.action; S.lastTag=target;
   }catch(e){
     S.phase="review"; render(); $("#confirmBtn").hidden=false; $("#dryWrap").hidden=false;
     $("#barmsg").innerHTML=`<span style="color:var(--warn)">${esc(e.message)}</span>`; return;
   }
   const isDry=res.status==="dry_run_completed";
   const written=new Set(isDry?sel.map(r=>r.item_id):(res.written_ids||[]));
-  sel.forEach(r=>{ if(written.has(r.item_id)){ S.prev.set(r.item_id,r.tag); if(!isDry) r.tag=target; } });
-  S.phase="done"; S.runId=res.run_id; S.dry=isDry; S.done=sel.filter(r=>written.has(r.item_id)); render();
+  const multi=NOUN()!=="watches";
+  sel.forEach(r=>{ if(written.has(r.item_id)){ S.prev.set(r.item_id,r.tag); if(!isDry) r.tag=!multi?(S.action==="set"?target:null):S.action==="set"?addTags(r.tag,target):(target?dropTags(r.tag,target):null); } });
+  S.runId=res.run_id; S.dry=isDry; S.done=sel.filter(r=>written.has(r.item_id));
+  // stay on the same cards with the same tags typed, ready for the next Add / Remove (watches keep the old results view)
+  S.phase=multi?"review":"done"; recompute(false); if(multi){ $("#confirmBtn").hidden=false; $("#dryWrap").hidden=false; }
   renderHistory();
-  const verb=S.action==="set"?`tagged ${esc(S.tag)}`:"cleared";
+  const verb=S.action==="set"?`tagged ${esc(String(S.tag).split(",").join(", "))}`:S.tag?`had ${esc(S.tag.split(",").join(", "))} removed`:"cleared";
   const f0=(res.failures||[])[0];
   const failNote=(res.failed||res.mismatch)?` <span style="color:var(--warn)">${(res.failed||0)+(res.mismatch||0)} failed${f0?` — admin said ${esc(String(f0.status??"?"))}: ${esc(String(f0.error||"no message").slice(0,200))}`:""} (run ${esc(res.run_id)}).</span>`:"";
   const skipNote=res.skipped_no_longer_matching?` <span class="dim">${res.skipped_no_longer_matching} no longer matched and were skipped.</span>`:"";
@@ -2185,8 +2203,10 @@ async function run(sel,dry){
     const want=S.action==="set"?S.tag:null, ids=[...written], msg=$("#barmsg");
     msg.insertAdjacentHTML("beforeend",` <span class="dim" id="tagCheck">· checking admin…</span>`);
     api("live",{ids}).then(live=>{ const el=$("#tagCheck"); if(!el) return;
-      const got=ids.filter(id=>live[id]&&((live[id].tag||null)===want)).length, seen=ids.filter(id=>live[id]).length;
-      el.outerHTML=seen?` <span class="${got===ids.length?"ook":"obad"}">· admin shows ${want?`<b>${esc(want)}</b>`:"no tag"} on ${got} of ${ids.length}</span>`:` <span class="dim">· couldn't read the cards back from admin</span>`;
+      // cards hold several tags: check the tags are in (Add) or out of (Remove) each card's list
+      const has=(id,t)=>tagList(live[id]&&live[id].tag).map(tagBase).includes(tagBase(t)), want2=S.lastTag;
+      const got=ids.filter(id=>live[id]&&(NOUN()==="watches"?((live[id].tag||null)===want):S.lastAction==="set"?tagList(want2).every(t=>has(id,t)):want2?tagList(want2).every(t=>!has(id,t)):!live[id].tag)).length, seen=ids.filter(id=>live[id]).length;
+      el.outerHTML=seen?` <span class="${got===ids.length?"ook":"obad"}">· admin confirms ${got} of ${ids.length}</span>`:` <span class="dim">· couldn't read the cards back from admin</span>`;
     }).catch(e=>{ const el=$("#tagCheck"); if(el) el.outerHTML=` <span class="dim">· admin check skipped: ${esc(e.message)}</span>`; });
   }
   const u=$("#undoBtn"); if(u) u.onclick=async()=>{
@@ -2206,7 +2226,7 @@ async function undo(){
   sel.forEach(r=>{ if(back.has(r.item_id)) r.tag=S.prev.get(r.item_id); });
   renderHistory();
   $("#barmsg").innerHTML=`<b>Undone.</b> ${back.size} cards are back to their previous tags.${res.failed?` <span style="color:var(--warn)">${res.failed} failed.</span>`:""}`;
-  S.undone=true; S.phase="done"; render();
+  S.undone=true; S.phase=NOUN()!=="watches"?"review":"done"; recompute(false); if(NOUN()!=="watches"){ $("#confirmBtn").hidden=false; $("#dryWrap").hidden=false; }
 }
 
 /* ---------- new request ---------- */

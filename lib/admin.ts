@@ -398,6 +398,29 @@ export async function liveWatches(session: AdminSession, ids: string[]) {
   return out;
 }
 
+/** The card's tags from admin's multi-tag store, or null if it can't be read. Required tags come back as "*name".
+ *  ponytail: read path taken from the item endpoints admin's card page uses (/admin/v1/items/card_<id>…); tries the item, then its tags. */
+// one tag from admin's list: a plain string ("test", or "*no_pack" when required) or an object with a name and a required flag
+const tagEntry = (t: any): string | null => {
+  if (typeof t === "string") return t;
+  const name = t?.name ?? t?.tag ?? t?.baseName ?? t?.label;
+  if (!name) return null;
+  return (t?.required ?? t?.isRequired ?? t?.mandatory) ? "*" + String(name).replace(/^\*/, "") : String(name);
+};
+async function itemTags(session: AdminSession, id: string): Promise<string[] | null> {
+  const norm = tagEntry;
+  for (const path of [`/admin/v1/items/card_${id}`, `/admin/v1/items/card_${id}/tags`]) {
+    try {
+      const r = await fetch(`${config.adminApiUrl()}${path}`, { headers: headers(session.accessToken) });
+      if (!r.ok) continue;
+      const j: any = await r.json();
+      const list = Array.isArray(j) ? j : Array.isArray(j?.tags) ? j.tags : Array.isArray(j?.item?.tags) ? j.item.tags : Array.isArray(j?.data) ? j.data : null;
+      if (list) return list.map(norm).filter((x: string | null): x is string => !!x);
+    } catch { /* try the next */ }
+  }
+  return null;
+}
+
 export async function liveCards(session: AdminSession, ids: string[]) {
   const out: Record<string, Record<string, unknown>> = {};
   const one = async (id: string) => {
@@ -414,6 +437,10 @@ export async function liveCards(session: AdminSession, ids: string[]) {
       const tagName = (t: any) => (typeof t === "string" ? t : t?.name ?? t?.tag ?? null);
       const tg = "tag" in c ? c.tag : Array.isArray(c.tags) ? c.tags.map(tagName).find(Boolean) ?? null : "cardTag" in c ? c.cardTag : undefined;
       if (tg !== undefined) pick.tag = tg && typeof tg === "object" ? tagName(tg) : tg || null;
+      // admin's multi-tag list (Edit Tags) lives on the item, not the card: read it and show every tag (*name = required)
+      // the card record carries the list as "tags" (["test", …]); only look it up separately if it doesn't
+      const multi = Array.isArray(c.tags) ? c.tags.map(tagEntry).filter((x: string | null): x is string => !!x) : await itemTags(session, id);
+      if (multi) { pick.tags = multi; pick.tag = multi.length ? multi.join(",") : null; }
       pick.archivedAt = c.archivedAt ?? null;
       pick.rescanRequestedAt = c.rescanRequestedAt ?? null;
       // the box admin still has the card in (its Archive Set asks "Has it been removed from the box?")
