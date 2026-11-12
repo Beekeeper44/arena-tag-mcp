@@ -445,8 +445,15 @@ dialog.info{max-width:760px;width:calc(100% - 32px);padding:0}
 .pill.new{border-color:var(--go);color:var(--go)}
 /* required tag (*name): filled green, like admin's Edit Tags */
 .reqtog input{accent-color:var(--go)}
+#grid .tile.refreshing{opacity:.55;transition:opacity .2s}
 .astatus{flex-wrap:wrap;gap:4px;justify-content:flex-start}
-.ast.st-not_accepted{background:#ff5a4a;border-color:#ff5a4a;color:#fff}
+/* Not accepted: red pill everywhere (tiles, filters, status lines) */
+.ast.st-not_accepted,.atile .ast.st-not_accepted,.ainfo .ast.st-not_accepted,.afields .ast.st-not_accepted,.tile .ast.st-not_accepted{
+  border:1.5px solid #ff5a4a!important;color:#ff5a4a!important;background:rgba(255,90,74,.12)!important;border-radius:999px!important;padding:1px 10px!important;font-weight:800!important}
+/* planned status changes: struck out (remove) / orange (apply) */
+.ast.strk,.tile .ast.strk,.atile .ast.strk,.tile .ast.st-not_accepted.strk,.ast.st-not_accepted.strk{text-decoration:line-through!important;color:#ff8a80!important;border:1.5px solid #ff8a80!important;background:transparent!important;opacity:.95}
+.ast.pend,.tile .ast.pend,.atile .ast.pend{color:#ffa31a!important;border:1.5px solid #ffa31a!important;background:transparent!important;border-radius:999px!important;padding:1px 10px!important;font-weight:800!important}
+
 .tps{display:inline-flex;flex-wrap:wrap;gap:4px}
 .tp{display:inline-block;border-radius:999px;padding:1px 9px;font-size:12px;font-weight:700;line-height:1.5;border:1px solid var(--text);color:var(--text);background:transparent}
 .tp.req{background:var(--go);border-color:var(--go);color:var(--go-ink,#04120a)}
@@ -887,7 +894,7 @@ function readRequest(text){
 const like=(v,q)=>{if(v==null)return false; const parts=String(q).toLowerCase().split("%"); let s=String(v).toLowerCase(),i=0; for(const p of parts){const j=s.indexOf(p,i); if(j<0)return false; i=j+p.length} return true};
 // Remove tag: picked tags win; otherwise whatever is typed in the tag search narrows to tags containing it
 function applyMode(rows,action,tag,mode,rm,rmq){
-  if(action==="clear"&&tag) return rows; // Remove with typed tags: every card stays; the selected ones lose those tags
+  if(action==="clear"&&(tag||NOUN()!=="watches")) return rows; // cards: every card stays on screen in Remove too (empty box = take off each card's own tag)
   if(action==="set") return rows.filter(r=>!(mode==="skip_tagged"&&r.tag)); // cards stay after tagging (they hold several tags)
   const q=String(rmq||"").toLowerCase().trim().replace(/[\s,]+/g,"_");
   return rows.filter(r=>!!r.tag&&(rm&&rm.length?rm.includes(r.tag.toLowerCase()):(!q||r.tag.toLowerCase().includes(q))));
@@ -1130,9 +1137,19 @@ const sprop=field=>field==="auth"?"auth_status":field==="archive"?"archived_at":
 const TSK={archive:{at:"archived_at",live:"archivedAt",what:"archived",field:"Archived At",title:"Archive"},pending_rescan:{at:"rescan_at",live:"rescanRequestedAt",what:"marked for rescan",field:"Rescan Requested At",title:"Rescan"}};
 const fmtAt=v=>{ if(!v) return ""; const d=new Date(String(v).replace(" ","T")); return isNaN(d)?String(v):d.toLocaleString([],{day:"numeric",month:"short",year:"2-digit",hour:"numeric",minute:"2-digit"}); };
 // Arena Club tiles: the card's status and authentication as admin has them (read live after every search / Refresh)
+// Planned status changes preview on the selected cards, like tags: Remove → struck out in red, Apply → orange until it's done
 const arenaStatusRow=r=>{ const auth=String(r.auth_status||"").toLowerCase();
-  const bits=[r.status?stHtml(r.status):"", auth&&auth!=="none"?`<span class="ast st-not_accepted st-bad">${esc(auth==="not_accepted"?"Not accepted":r.auth_status)}</span>`:"",
-    r.archived_at?`<span class="ast st-archived" title="Archived At">archived ${esc(fmtAt(r.archived_at))}</span>`:"", r.rescan_at?`<span class="ast st-pending_rescan" title="Rescan Requested At">rescan ${esc(fmtAt(r.rescan_at))}</span>`:""].filter(Boolean);
+  const p=S&&S.phase==="review"&&S.selected&&S.selected.has(r.item_id)?(S.plan||{}):{};
+  const st=String(r.status||"").toLowerCase(), isArc=!!(r.archived_at||st==="archived"), isRsc=!!(r.rescan_at||st==="pending_rescan"), isNa=auth==="not_accepted";
+  const x=(html,cond)=>cond?html.replace('class="ast','class="ast strk'):html;
+  const statusPill=r.status?x(stHtml(r.status),(p.archive==="remove"&&st==="archived")||(p.pending_rescan==="remove"&&st==="pending_rescan")):"";
+  const bits=[statusPill,
+    auth&&auth!=="none"?x(`<span class="ast st-not_accepted st-bad">${esc(isNa?"Not accepted":r.auth_status)}</span>`,p.not_accepted==="remove"&&isNa):"",
+    r.archived_at?x(`<span class="ast st-archived" title="Archived At">archived ${esc(fmtAt(r.archived_at))}</span>`,p.archive==="remove"):"",
+    r.rescan_at?x(`<span class="ast st-pending_rescan" title="Rescan Requested At">rescan ${esc(fmtAt(r.rescan_at))}</span>`,p.pending_rescan==="remove"):"",
+    p.not_accepted==="apply"&&!isNa?`<span class="ast pend" title="will be set">Not accepted</span>`:"",
+    p.archive==="apply"&&!isArc?`<span class="ast pend" title="will be set">archived</span>`:"",
+    p.pending_rescan==="apply"&&!isRsc?`<span class="ast pend" title="will be set">pending_rescan</span>`:""].filter(Boolean);
   return bits.length?`<div class="arow astatus">${bits.join("")}</div>`:""; };
 const arcHtml=r=>r&&r.archived_at?`<span class="ast st-archived">${esc(fmtAt(r.archived_at))}</span>`:"";
 const rscHtml=r=>r&&r.rescan_at?`<span class="ast st-pending_rescan">${esc(fmtAt(r.rescan_at))}</span>`:"";
@@ -1230,6 +1247,7 @@ async function gApply(){
     st.ok=r&&r.dry_run?(r.would_write||0):(r&&r.succeeded)||0; st.fail=r&&r.error?st.n:((r&&r.failed)||0)+((r&&r.mismatch)||0); details.push($("#barmsg").innerHTML); });
   if(gTagsOn()) await run("t",async st=>{ const r=await gTagStep(sel.map(x=>x.item_id),dry); st.ok=r.ok; st.fail=r.fail; details.push(r.html); });
   draw();
+  if(S.kind==="arena"&&!dry){ try{ await liveDates(sel); render(); draw(); }catch{} } // tiles show what admin has now
 }
 function restorePanel(locked,key){
   const busy=key==="archive"?"archived":"pending_rescan", cur=(S.rs||{})[key]||"";
@@ -1340,10 +1358,16 @@ async function statusRun(dry){
   for(const p of todo){
     $("#barmsg").innerHTML=`<span class="spin"></span>${dry?"Dry run":"Writing to admin"}: ${esc(p.v.label.toLowerCase())}… ${p.hit.length} cards`;
     try{ done.push({p,res:await statusExec(p,dry,conf)}); }
-    catch(e){ done.push({p,err:e.message}); break; }
+    catch(e){
+      // admin already had it that way (read at the moment of writing): skip this one, keep going with the rest
+      if(/None of the selected cards are|already .* in admin/i.test(e.message)){ done.push({p,skip:e.message}); continue; }
+      done.push({p,err:e.message}); break; }
   }
+  // show what admin has now on the tiles (status, authentication, dates)
+  try{ await liveDates(S.rows.filter(r=>S.selected.has(r.item_id))); }catch{}
   recompute(false);
-  const parts=done.map(({p,res,err},i)=>{
+  const parts=done.map(({p,res,err,skip},i)=>{
+    if(skip) return `<span class="dim">${esc(p.v.label)}: already ${p.a.op==="apply"?esc(p.v.value):"off"} in admin, skipped</span>`;
     if(err) return `<span style="color:var(--warn)">${esc(p.v.label)}: ${esc(err)}</span>`;
     const n=res.dry_run?(res.changes||[]).length:(res.written_ids||[]).length, f=res.failed?` <span style="color:var(--warn)">${res.failed} failed: ${esc(String((res.failures||[])[0]?.error||"").slice(0,140))}</span>`:"";
     return res.dry_run?`${esc(p.v.label)}: ${n} would ${p.a.op==="apply"?"be set":"be removed"}`
@@ -1591,13 +1615,20 @@ async function refreshLive(){
   const mine=S; if(!mine||!mine.matched.length) return;
   const note=$("#srcMsg"); const base=note.innerHTML.replace(/<div class="dim small" style="margin-top:4px">(Checking live|✓ Grades checked live|Live check skipped)[\s\S]*?<\/div>/g,"");
   note.innerHTML=base+`<div class="dim small" style="margin-top:4px">Checking live grades in admin…</div>`;
-  let live; try{ live=await api("live",{ids:mine.matched.map(r=>r.item_id)}); }catch(e){ note.innerHTML=base+`<div class="dim small" style="margin-top:4px">Live check skipped: ${esc(e.message)}</div>`; return; }
+  document.querySelectorAll("#grid .tile").forEach(t=>t.classList.add("refreshing")); // show it's working on the cards
+  let live; try{ live=await api("live",{ids:mine.matched.map(r=>r.item_id)}); }catch(e){ note.innerHTML=base+`<div class="dim small" style="margin-top:4px">Live check skipped: ${esc(e.message)}</div>`; document.querySelectorAll("#grid .tile.refreshing").forEach(t=>t.classList.remove("refreshing")); const lb=$("#liveBtn"); if(lb){ lb.disabled=false; lb.textContent="↻ Refresh from admin"; } return; }
   if(S!==mine) return; // a new search started meanwhile
   let changed=0, auth=0;
   const num=v=>v===null||v===undefined||v===""?null:Number(v);
   let rechk=0;
   for(const r of mine.matched){ const d=live[r.item_id]; if(!d) continue; snapCheck(r);
-    const before=JSON.stringify([r.grade_num,r.centering,r.corners,r.edges,r.surface,r.img,r.tag]);
+    const before=JSON.stringify([r.grade_num,r.centering,r.corners,r.edges,r.surface,r.img,r.tag,r.status,r.auth_status,r.archived_at,r.rescan_at]);
+    // status, authentication, archive / rescan dates and box too, so the pills match admin right away
+    if(d.archivedAt!==undefined) r.archived_at=d.archivedAt||null;
+    if(d.rescanRequestedAt!==undefined) r.rescan_at=d.rescanRequestedAt||null;
+    if(d.boxLabel!==undefined) r.in_box=d.boxLabel||null;
+    if(d.status!==undefined) r.status=d.status;
+    if(d.authenticationStatus!==undefined) r.auth_status=d.authenticationStatus;
     const o=num(d.overall), gc=r.grading_company||"arena_club";
     if(o!==null){
       if(o===0){ r.authentic=true; r.grade_num=0; r.check_overall=0; r.overall_check="pass"; r.grade=gc+" authentic"; for(const k of ["centering","corners","edges","surface"]) if(num(d[k])!==null) r[k]=num(d[k]); auth++; }
@@ -1605,11 +1636,12 @@ async function refreshLive(){
     }
     if(d.frontSlabPictureUrl) r.img=d.frontSlabPictureUrl;
     if(d.tag!==undefined) r.tag=d.tag||null;
-    if(JSON.stringify([r.grade_num,r.centering,r.corners,r.edges,r.surface,r.img,r.tag])!==before){ r.liveChanged=true; changed++; }
+    if(JSON.stringify([r.grade_num,r.centering,r.corners,r.edges,r.surface,r.img,r.tag,r.status,r.auth_status,r.archived_at,r.rescan_at])!==before){ r.liveChanged=true; changed++; }
     if(o!==null&&o!==0){ recheck(r); if(r.overall_check==="recheck") rechk++; }
   }
   note.innerHTML=base+`<div class="dim small" style="margin-top:4px">✓ Grades checked live in admin${changed?` · <b class="ook">${changed} updated</b> (Metabase hadn't caught up yet)`:" · all match"}${auth?` · ${auth} authentic`:""}${rechk?` · <b class="orechk">${rechk} need${rechk===1?"s":""} a recheck</b> (subgrades changed since the Overall Check ran)`:""}</div>`;
   if(S.phase==="review") recompute(false); else render();
+  const lb=$("#liveBtn"); if(lb){ lb.disabled=false; lb.textContent="↻ Refresh from admin"; }
 }
 function rmChips(locked){
   const counts=new Map(); for(const r of S.matched) if(r.tag){const t=r.tag.toLowerCase(); counts.set(t,(counts.get(t)||0)+1);}
