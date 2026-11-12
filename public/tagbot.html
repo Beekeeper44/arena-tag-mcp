@@ -1106,19 +1106,20 @@ function gradesRow(locked){
   const g=gPlan();
   const pill=(attr,on,l,step,cls="",dis=false,title="")=>`<button type="button" class="sabtn gp${cls}${on?" on":""}" ${attr} aria-pressed="${on}" ${locked||dis?"disabled":""}${title?` title="${title}"`:""}>${step?`<span class="gstep">${step}</span>`:""}${l}</button>`;
   return `<div class="sact" role="group" aria-label="Grades"><span class="dim small">Grades:</span>
-    <span class="sagrp">${pill('data-g="overall"',g.overall,"Clear overall","1")}${pill('data-g="clear"',g.clear,"Clear subgrades","2")}${pill('data-g="task"',g.task,"Remove subgrades task","3"," gtask")}</span>
+    <span class="sagrp">${pill('data-g="task"',g.task,"Remove subgrades task","1"," gtask")}${pill('data-g="clear"',g.clear,"Clear subgrades","2")}${pill('data-g="overall"',g.overall,"Clear overall","3")}</span>
+    <span class="dim small">runs in this order</span>
   </div>
+  ${g.task?`<div class="sact" role="group" aria-label="Subgrade tasks to remove"><span class="dim small"><span class="gstep">1</span>Remove:</span>
+    <span class="sagrp">${G_SUBS.map(([k,l])=>G_TASK_READY.has(k)?pill(`data-gt="${k}"`,g.tsubs.has(k),l,""," tsub"):pill(`data-gt="${k}"`,false,l+" (soon)",""," tsub",true,"Needs a Review Override capture for "+l.toLowerCase())).join("")}</span>
+    <span class="dim small">Review Override every annotation to <b>None</b> and approve</span></div>`:""}
   ${g.clear?`<div class="sact" role="group" aria-label="Subgrades to clear"><span class="dim small"><span class="gstep">2</span>Clear:</span>
     <span class="sagrp">${G_SUBS.map(([k,l])=>pill(`data-gs="${k}"`,g.subs.has(k),l)).join("")}</span>
-    <span class="dim small">lit = set to 0 · click one to keep its original number</span></div>`:""}
-  ${g.task?`<div class="sact" role="group" aria-label="Subgrade tasks to remove"><span class="dim small"><span class="gstep">3</span>Remove:</span>
-    <span class="sagrp">${G_SUBS.map(([k,l])=>G_TASK_READY.has(k)?pill(`data-gt="${k}"`,g.tsubs.has(k),l,""," tsub"):pill(`data-gt="${k}"`,false,l+" (soon)",""," tsub",true,"Needs a Review Override capture for "+l.toLowerCase())).join("")}</span>
-    <span class="dim small">Review Override every annotation to <b>None</b> and approve</span></div>`:""}`;
+    <span class="dim small">lit = set to 0 · click one to keep its original number</span></div>`:""}`;
 }
 function gSummary(){ const g=gPlan(), parts=[], names=G_SUBS.filter(([k])=>g.subs.has(k)).map(([,l])=>l.toLowerCase()).join(", ");
-  if(g.overall) parts.push("set the <b>overall</b> to 0");
-  if(g.clear&&g.subs.size) parts.push(`set <b>${names}</b> to 0`);
   if(gTaskOn()) parts.push(`override every <b>corner</b> annotation to none`);
+  if(g.clear&&g.subs.size) parts.push(`set <b>${names}</b> to 0`);
+  if(g.overall) parts.push("set the <b>overall</b> to 0");
   return parts.join(", then "); }
 // Show the zeros on the cards as soon as ① / ② / the subgrade pills change (selected cards only); unpicking puts the old value back
 function gSync(){
@@ -1128,13 +1129,24 @@ function gSync(){
   for(const id of sel) for(const [k] of GKEYS) if(want(k)&&!mine.has(id+"|"+k)){ geSet(id,k,"0"); S.geOpen[id]=true; mine.add(id+"|"+k); }
 }
 async function gApply(){
-  const g=gPlan(), ids=S.rows.filter(r=>S.selected.has(r.item_id)).map(r=>r.item_id);
-  if(!ids.length){ $("#barmsg").innerHTML=`<span class="warn-txt">Select the cards first.</span>`; return; }
+  const g=gPlan(), sel=S.rows.filter(r=>S.selected.has(r.item_id)), dry=$("#dry").checked;
+  if(!sel.length){ $("#barmsg").innerHTML=`<span class="warn-txt">Select the cards first.</span>`; return; }
   gSync(); render();
-  const zeros=geCount()>0;
-  if(zeros){ const before=Object.keys(S.ge||{}).length; await saveOverall(); if(Object.keys(S.ge||{}).length===before) return; } // cancelled or failed: stop
-  if(gTaskOn()){ await cornersNone(); return; }
-  if(!zeros) $("#barmsg").innerHTML=`<span class="warn-txt">Those grades are already 0.</span>`;
+  const zeros=geCount()>0, corners=gTaskOn();
+  if(!zeros&&!corners){ $("#barmsg").innerHTML=`<span class="warn-txt">Those grades are already 0.</span>`; return; }
+  const lab={centering:"Centering",corners:"Corners",edges:"Edges",surface:"Surface",overall:"Overall"};
+  const zl=Object.entries(S.ge).filter(([,o])=>Object.keys(o).length).slice(0,8).map(([id,o])=>{ const c=S.matched.find(x=>x.item_id===id)||{};
+    return `<li><span><b>${esc(c.player_name||"")}</b> <span class="dim">AC ${esc(c.ac||"")}</span><br>${Object.entries(o).map(([k,v])=>`${lab[k]} ${gNow(c,k)??"–"} → <b>${v}</b>`).join(" · ")}</span></li>`; });
+  // one confirm for everything; then it runs straight through, no more popups
+  const ok=await ask({title:`Apply to ${sel.length} card${sel.length===1?"":"s"} in admin?`,
+    body:`${dry?"<b>Dry run:</b> nothing is written.<br><br>":""}${corners?`<div class="planline"><b>1 · Corners → none</b><br>All four corners get a Review Override with every annotation at <b>none</b>, approved under your name.</div>`:""}
+      ${zeros?`<div class="planline"><b>${corners?"2":"1"} · Grades → 0</b>, then approved (label and slab rebuilt)<ul class="taglist gl">${zl.join("")}</ul></div>`:""}
+      <div class="dim small">Runs in this order. Each step can be undone from Recent runs.</div>`,
+    yes:dry?"Run dry run":"Yes, apply"});
+  if(!ok) return;
+  let first="";
+  if(corners){ await cornersNone({noAsk:true,skipImages:zeros&&!dry}); first=$("#barmsg").innerHTML; gSync(); render(); } // the grade save rebuilds the label anyway
+  if(geCount()>0){ await saveOverall({noAsk:true}); if(first) $("#barmsg").innerHTML=first+"<br>"+$("#barmsg").innerHTML; }
 }
 function restorePanel(locked,key){
   const busy=key==="archive"?"archived":"pending_rescan", cur=(S.rs||{})[key]||"";
@@ -1321,18 +1333,18 @@ document.addEventListener("click",e=>{
   else if(t.dataset.gereset){ delete S.ge[t.dataset.gereset]; render(); }
   else if(t.dataset.geexp){ const i=document.querySelector(`input[data-gid="${t.dataset.geexp}"][data-gk="overall"]`); if(i){ i.value=t.dataset.v; geSet(t.dataset.geexp,"overall",t.dataset.v); } }
 });
-async function cornersNone(){
+async function cornersNone(opts={}){
   const sel=S.rows.filter(r=>S.selected.has(r.item_id)), dry=$("#dry").checked;
   if(!sel.length){ $("#barmsg").innerHTML=`<span class="warn-txt">Select the cards first.</span>`; return; }
-  const ok=await ask({title:`Set every corner annotation to none on ${sel.length} card${sel.length===1?"":"s"}?`,
+  const ok=opts.noAsk?true:await ask({title:`Set every corner annotation to none on ${sel.length} card${sel.length===1?"":"s"}?`,
     body:`${dry?"<b>Dry run:</b> reads each card's corners from admin and lists what would change. Nothing is written.<br><br>":""}For <b>all four corners</b>, TAG-BOT makes a <b>review override</b> with every annotation set to <b>none</b> and approves it under your name, the same as editing the corner on the grading page and clicking Review Override. Corners already at none are overridden too, so every corner shows your approval.
-      <br><br>Admin then recalculates the <b>Corners</b> subgrade, and the label and slab are rebuilt. The <b>overall</b> isn't changed: cards whose subgrades moved show <b>RECHECK</b> so you can fix the overall with Save & approve.
+      <br><br>The label and slab are rebuilt. The card's <b>Corners</b> subgrade and <b>overall</b> aren't changed by this (set them with Clear subgrades / Clear overall or the grade editor).
       <div class="dim small" style="margin-top:8px">Credited to your grader profile, with no accuracy score. You can undo from Recent runs (it overrides each corner back).</div>`,
     yes:dry?"Run dry run":"Yes, set corners to none"});
-  if(!ok) return;
+  if(!ok) return false;
   const b=$("#confirmBtn"); if(b) b.disabled=true;
   $("#barmsg").innerHTML=`<span class="spin"></span>${dry?"Reading corners":"Overriding corners"}… ${sel.length} card${sel.length===1?"":"s"}`;
-  let r; try{ r=await api("corners",{text:S.text,item_ids:sel.map(x=>x.item_id),dry_run:dry}); }
+  let r; try{ r=await api("corners",{text:S.text,item_ids:sel.map(x=>x.item_id),dry_run:dry,skip_images:!!opts.skipImages}); }
   catch(e){ if(b) b.disabled=false; render(); $("#barmsg").innerHTML=`<span class="warn-txt">${esc(e.message)}</span>`; return; }
   let moved=0;
   for(const c of r.cards||[]){ const row=S.matched.find(x=>x.item_id===c.item_id); if(!row||r.dry_run||!c.changed.length) continue;
@@ -1340,14 +1352,14 @@ async function cornersNone(){
     recheck(row); }
   recompute(false);
   const lines=(r.cards||[]).filter(c=>c.changed.length||c.error).slice(0,6).map(c=>{ const row=S.matched.find(x=>x.item_id===c.item_id)||{};
-    return `<span class="dim">AC ${esc(row.ac||"")}</span> ${c.changed.length} corner${c.changed.length===1?"":"s"}${c.changed.length?` (${c.changed.map(x=>x.replace("_"," ")).join(", ")})`:""}${c.corners_before!=null&&c.corners_after!=null&&!r.dry_run?` · Corners ${c.corners_before} → <b>${c.corners_after}</b>`:""}${c.error?` <span class="warn-txt">${esc(c.error.slice(0,120))}</span>`:""}`; });
+    return `<span class="dim">AC ${esc(row.ac||"")}</span>${row.card_url?` <a class="clickme" href="${esc(row.card_url)}" target="_blank" rel="noopener" title="Open this card in admin (a fresh load shows the new corners)">open in admin ↗</a>`:""} ${c.changed.length} corner${c.changed.length===1?"":"s"}${c.changed.length?` (${c.changed.map(x=>x.replace("_"," ")).join(", ")})`:""}${c.corners_before!=null&&c.corners_after!=null&&!r.dry_run?` · Corners ${c.corners_before} → <b>${c.corners_after}</b>`:""}${c.error?` <span class="warn-txt">${esc(c.error.slice(0,120))}</span>`:""}`; });
   const none=(r.cards||[]).filter(c=>!c.changed.length&&!c.error).length;
   $("#barmsg").innerHTML=r.dry_run?`<b>Dry run:</b> ${r.would_write||0} card${r.would_write===1?"":"s"} would have corners overridden${none?` · ${none} already none`:""}. ${lines.join(" · ")}`
     :`<b class="done-badge" style="font-size:14px">✓ Corners → none on ${r.succeeded} card${r.succeeded===1?"":"s"}</b>${r.failed?` <span class="warn-txt">${r.failed} failed</span>`:""}${none?` · ${none} already none`:""}${moved?` · <b>${moved}</b> Corners subgrade changed: check RECHECK cards' overall`:""}<br>${lines.join(" · ")} <span class="dim">· undo from Recent runs</span>`;
 }
 // Set all four subgrades and the overall to 0 (only the ones not already 0 count as changes)
 function geZero(ids){ for(const id of ids){ S.geOpen[id]=true; for(const [k] of GKEYS) geSet(id,k,"0"); } }
-async function saveOverall(){
+async function saveOverall(opts={}){
   const items=Object.entries(S.ge).filter(([,o])=>Object.keys(o).length).map(([item_id,o])=>({item_id,grades:Object.fromEntries(Object.entries(o).map(([k,v])=>[k,Number(v)]))}));
   for(const it of items) for(const [k,v] of Object.entries(it.grades)) if(!gOK(v)){ $("#barmsg").innerHTML=`<span class="warn-txt">“${esc(String(S.ge[it.item_id][k]))}” isn't a grade (${k}). Use 0 to 10 in half steps, e.g. 8.5.</span>`; return; }
   const dry=$("#dry").checked;
@@ -1357,14 +1369,14 @@ async function saveOverall(){
     const ch=Object.entries(it.grades).map(([k,v])=>`${lab[k]} ${gNow(c,k)??"–"} → <b>${v}</b>`).join(" · ");
     return `<li><span><b>${esc(c.player_name||"")}</b> <span class="dim">AC ${esc(c.ac||"")}</span><br>${ch}</span></li>`; });
   const canTag=S.action==="set"&&S.tag&&/^[a-z0-9_]+$/.test(S.tag);
-  const ok=await ask({
+  const ok=opts.noAsk?true:await ask({
     title:n===1?"Do you wish to approve this card to admin?":`Do you wish to approve these ${n} cards to admin?`,
     body:`${dry?"<b>Dry run:</b> records what would change without writing to admin.<br><br>":""}<ul class="taglist gl">${lines.slice(0,12).join("")}${n>12?`<li><span class="dim">+${n-12} more</span></li>`:""}</ul>
       Same as the review page: the label and slab are rebuilt with the new grades, then the cards are <b>approved</b>, which makes the new grades live.
       ${canTag?`<label class="asktag"><input type="checkbox" id="askTag" checked> Also tag these ${n} ${cs} as <b>${esc(S.tag)}</b></label>`:`<div class="dim small" style="margin-top:8px">To tag them too, enter a tag in the tag box first.</div>`}
       <div class="dim small" style="margin-top:6px">You can undo this from Recent runs.</div>`,
     yes:dry?"Run dry run":approve?"Yes, save & approve":"Yes, save to admin"});
-  if(!ok) return;
+  if(!ok) return false; // cancelled: callers stop here
   const alsoTag=canTag&&!!($("#askTag")&&$("#askTag").checked);
   const b=$("#ovBtn"); b.disabled=true; b.textContent="Saving…";
   try{

@@ -191,7 +191,7 @@ export async function POST(req: Request, ctx: Ctx) {
         }));
       case "corners":
         // Arena Club: every corner annotation → none (override + approve per corner, then label/slab rebuild)
-        return json(await runCornersNone({ text: str("text"), item_ids: Array.isArray(body.item_ids) ? (body.item_ids as string[]) : [], dry_run: body.dry_run === true, user: u.name, as_admin_user_id: adminLoginFor(u) }));
+        return json(await runCornersNone({ text: str("text"), item_ids: Array.isArray(body.item_ids) ? (body.item_ids as string[]) : [], dry_run: body.dry_run === true, skip_images: body.skip_images === true, user: u.name, as_admin_user_id: adminLoginFor(u) }));
       case "live": {
         // current grades straight from admin for the cards on screen (Metabase lags behind)
         const ids = (Array.isArray(body.ids) ? (body.ids as string[]) : []).slice(0, 2000);
