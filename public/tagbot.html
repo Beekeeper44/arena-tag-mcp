@@ -1225,6 +1225,7 @@ function gradeEditor(r){
     <div class="gegrid">${GKEYS.map(([k,l])=>{ const cur=gNow(r,k), v=edits[k]!=null?edits[k]:(cur??""); const ch=edits[k]!=null;
       return `<label class="gef${k==="overall"?" ov":""}${ch?" ch":""}"><span>${l}${ch&&cur!=null?` <s>${cur}</s>`:""}</span><input type="text" inputmode="decimal" name="grade-${k}-${esc(id)}" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" data-lpignore="true" data-1p-ignore="true" data-bwignore="true" data-form-type="other" data-gid="${esc(id)}" data-gk="${k}" value="${esc(v)}" aria-label="${l} for ${esc(r.player_name)}"></label>`; }).join("")}</div>
     <div class="geacts">${r.expected!=null&&gNow(r,"overall")!==r.expected?`<button type="button" class="ovuse" data-geexp="${esc(id)}" data-v="${esc(r.expected)}">overall = expected ${esc(r.expected)}</button>`:""}
+      <button type="button" class="ovuse" data-gezero="${esc(id)}">all 0</button>
       ${Object.keys(edits).length?`<button type="button" class="ovuse" data-gereset="${esc(id)}">reset</button>`:""}
       <button type="button" class="ovuse" data-geclose="${esc(id)}">close</button>${S.geSaved[id]?'<span class="ook">saved ✓</span>':""}</div>
   </div>`;
@@ -1244,12 +1245,15 @@ document.addEventListener("focusout",e=>{ const i=e.target.closest&&e.target.clo
   const r=S.matched.find(x=>x.item_id===i.dataset.gid); const cur=r?gNow(r,i.dataset.gk):null; if(cur!=null) i.value=cur; });
 document.addEventListener("input",e=>{ const i=e.target.closest&&e.target.closest("input[data-gid]"); if(!i||!S) return; geSet(i.dataset.gid,i.dataset.gk,i.value); });
 document.addEventListener("click",e=>{
-  const t=e.target.closest&&e.target.closest("[data-geopen],[data-geclose],[data-gereset],[data-geexp]"); if(!t||!S) return; e.preventDefault();
+  const t=e.target.closest&&e.target.closest("[data-geopen],[data-geclose],[data-gereset],[data-geexp],[data-gezero]"); if(!t||!S) return; e.preventDefault();
+  if(t.dataset.gezero){ geZero([t.dataset.gezero]); render(); return; }
   if(t.dataset.geopen){ S.geOpen[t.dataset.geopen]=true; render(); document.querySelector(`input[data-gid="${t.dataset.geopen}"]`)?.focus(); }
   else if(t.dataset.geclose){ S.geOpen[t.dataset.geclose]=false; render(); }
   else if(t.dataset.gereset){ delete S.ge[t.dataset.gereset]; render(); }
   else if(t.dataset.geexp){ const i=document.querySelector(`input[data-gid="${t.dataset.geexp}"][data-gk="overall"]`); if(i){ i.value=t.dataset.v; geSet(t.dataset.geexp,"overall",t.dataset.v); } }
 });
+// Set all four subgrades and the overall to 0 (only the ones not already 0 count as changes)
+function geZero(ids){ for(const id of ids){ S.geOpen[id]=true; for(const [k] of GKEYS) geSet(id,k,"0"); } }
 async function saveOverall(){
   const items=Object.entries(S.ge).filter(([,o])=>Object.keys(o).length).map(([item_id,o])=>({item_id,grades:Object.fromEntries(Object.entries(o).map(([k,v])=>[k,Number(v)]))}));
   for(const it of items) for(const [k,v] of Object.entries(it.grades)) if(!gOK(v)){ $("#barmsg").innerHTML=`<span class="warn-txt">“${esc(String(S.ge[it.item_id][k]))}” isn't a grade (${k}). Use 0 to 10 in half steps, e.g. 8.5.</span>`; return; }
@@ -1477,6 +1481,7 @@ function renderInner(){
           <option value="evhigh"${S.sort==="evhigh"?" selected":""}>EV: high → low</option>
           <option value="evlow"${S.sort==="evlow"?" selected":""}>EV: low → high</option></select>
         ${S.kind==="arena"?`
+        <button type="button" class="btn" id="zeroBtn" title="Set centering, corners, edges, surface and overall to 0 on the selected cards, then save & approve to admin">0 all grades (${S.rows.filter(r=>S.selected.has(r.item_id)).length})</button>
         <button type="button" class="btn only75${S.only75?" on":""}" id="only75" aria-pressed="${!!S.only75}">${S.only75?"✓ ":""}Only ≤ 7.5 / auth</button>
         <button type="button" class="btn" id="liveBtn" title="Re-read every card's grades, slab and tag straight from admin (Metabase updates on a delay)">↻ Refresh from admin</button>`:ARCHK(S.kind)||S.kind==="cards"||S.kind==="watches"?`
         <button type="button" class="btn" id="archLiveBtn" title="Re-read every card's status, authentication status, tag and photo straight from admin (Metabase updates on a delay)">↻ Refresh from admin</button>`:""}</div>
@@ -1875,6 +1880,12 @@ function bindSummary(){
   const lb=$("#liveBtn"); if(lb) lb.onclick=async()=>{ lb.disabled=true; lb.textContent="Refreshing…"; await refreshLive(); };
   const alb=$("#archLiveBtn"); if(alb) alb.onclick=async()=>{ alb.disabled=true; alb.textContent="Refreshing…"; await refreshArchived(); };
   const o75=$("#only75"); if(o75) o75.onclick=()=>{ S.only75=!S.only75; recompute(true); };
+  // one click: zero every grade on the selected cards, then the usual Save & approve confirm
+  const zb=$("#zeroBtn"); if(zb) zb.onclick=()=>{ const ids=S.rows.filter(r=>S.selected.has(r.item_id)).map(r=>r.item_id);
+    if(!ids.length){ $("#barmsg").innerHTML=`<span class="warn-txt">Select the cards to zero first.</span>`; return; }
+    geZero(ids); render();
+    if(!geCount()){ $("#barmsg").innerHTML=`<span class="warn-txt">Those cards' grades are already 0.</span>`; return; }
+    saveOverall(); };
   document.querySelectorAll(".sabtn").forEach(b=>b.onclick=()=>{ const k=b.dataset.sk, op=b.dataset.sop; S.plan=S.plan||{};
     if(S.plan[k]===op) delete S.plan[k]; else S.plan[k]=op;            // click again to unpick; Apply ↔ Remove swaps
     S.sact=planList()[0]||null; render();
