@@ -323,6 +323,19 @@ h1 span{color:var(--go)}
 .gp.tsub[disabled]{opacity:.45}
 .gstep{display:inline-grid;place-items:center;width:17px;height:17px;margin-right:6px;border-radius:50%;font-size:11px;font-weight:800;background:var(--line);color:var(--text)}
 .sabtn.on .gstep{background:rgba(0,0,0,.25);color:inherit}
+.prog{display:grid;gap:6px;width:100%;max-width:760px}
+.pstep{display:grid;grid-template-columns:minmax(150px,220px) 1fr auto;gap:10px;align-items:center;font-size:13px}
+.pstep .plabel{font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pbar{position:relative;display:flex;height:12px;border-radius:999px;background:var(--line);overflow:hidden}
+.pbar i{display:block;height:100%;background:var(--go);transition:width .4s}
+.pbar b{display:block;height:100%;background:var(--bad,#ff4d3d);transition:width .4s}
+.pstep.run .pbar{background:repeating-linear-gradient(45deg,var(--line) 0 8px,color-mix(in srgb,var(--go) 35%,var(--line)) 8px 16px);background-size:200% 100%;animation:pmove 1s linear infinite}
+@keyframes pmove{to{background-position:-46px 0}}
+@media (prefers-reduced-motion: reduce){.pstep.run .pbar{animation:none}}
+.pstep.wait{opacity:.55}
+.pstep .pnum{white-space:nowrap;font-variant-numeric:tabular-nums}
+.pdet{font-size:12px;max-height:120px;overflow:auto}
+.pdet summary{cursor:pointer;color:var(--dim)}
 .planline{margin:0 0 10px;padding:8px 10px;border:1px solid var(--line);border-radius:8px}
 .alsona{display:flex;gap:8px;align-items:flex-start;margin:10px 0 6px;font-size:14px;cursor:pointer}
 .alsona input{width:18px;height:18px;accent-color:var(--go);flex:none;margin-top:1px}
@@ -1137,6 +1150,7 @@ function gSummary(){ const g=gPlan(), parts=[], names=G_SUBS.filter(([k])=>g.sub
   if(gTaskOn()) parts.push(`override every <b>${gParts().map(p=>p+"s").join(" and ")}</b> annotation to none`);
   if(g.clear&&g.subs.size) parts.push(`set <b>${names}</b> to 0`);
   if(g.overall) parts.push("set the <b>overall</b> to 0");
+  if(typeof gTagsOn==="function"&&gTagsOn()) parts.push(`add the tag${S.tag.includes(",")?"s":""} <b>${esc(S.tag.split(",").join(", "))}</b>`);
   return parts.join(", then "); }
 // Show the zeros on the cards as soon as ① / ② / the subgrade pills change (selected cards only); unpicking puts the old value back
 function gSync(){
@@ -1145,12 +1159,22 @@ function gSync(){
   for(const key of [...mine]){ const [id,k]=key.split("|"); if(!sel.has(id)||!want(k)){ if(S.ge[id]&&S.ge[id][k]==="0") geSet(id,k,""); mine.delete(key); } }
   for(const id of sel) for(const [k] of GKEYS) if(want(k)&&!mine.has(id+"|"+k)){ geSet(id,k,"0"); S.geOpen[id]=true; mine.add(id+"|"+k); }
 }
+const gTagsOn=()=>S.action==="set"&&!!S.tag&&TAGS_OK(S.tag);
+async function gTagStep(ids,dry){
+  try{
+    const t=await api("apply",{kind:S.kind,view:S.view,text:S.text,filters:S.filters,queries:S.queries,post_filters:S.post,action:"set",tag:S.tag,mode:"overwrite",item_ids:ids,dry_run:dry});
+    const isDry=t.status==="dry_run_completed", w=isDry?ids:(t.written_ids||[]);
+    if(!isDry) w.forEach(id=>{ const c=S.matched.find(x=>x.item_id===id); if(c) c.tag=S.tag; });
+    if(!isDry) recompute(false);
+    return {ok:w.length,fail:t.failed||0,html:`${isDry?"Dry run: would tag":"✓ Tagged"} <b>${w.length}</b> card${w.length===1?"":"s"} ${tagPills(S.tag)}${t.failed?` <span class="obad">${t.failed} failed</span>`:""} <span class="dim">· run ${esc(t.run_id||"")}</span>`};
+  }catch(e){ return {ok:0,fail:ids.length,html:`<span class="obad">Tags not applied: ${esc(e.message)}</span>`}; }
+}
 async function gApply(){
   const g=gPlan(), sel=S.rows.filter(r=>S.selected.has(r.item_id)), dry=$("#dry").checked;
   if(!sel.length){ $("#barmsg").innerHTML=`<span class="warn-txt">Select the cards first.</span>`; return; }
   gSync(); render();
   const zeros=geCount()>0, corners=gTaskOn();
-  if(!zeros&&!corners){ $("#barmsg").innerHTML=`<span class="warn-txt">Those grades are already 0.</span>`; return; }
+  if(!zeros&&!corners&&!gTagsOn()){ $("#barmsg").innerHTML=`<span class="warn-txt">Those grades are already 0.</span>`; return; }
   const lab={centering:"Centering",corners:"Corners",edges:"Edges",surface:"Surface",overall:"Overall"};
   const zl=Object.entries(S.ge).filter(([,o])=>Object.keys(o).length).slice(0,8).map(([id,o])=>{ const c=S.matched.find(x=>x.item_id===id)||{};
     return `<li><span><b>${esc(c.player_name||"")}</b> <span class="dim">AC ${esc(c.ac||"")}</span><br>${Object.entries(o).map(([k,v])=>`${lab[k]} ${gNow(c,k)??"–"} → <b>${v}</b>`).join(" · ")}</span></li>`; });
@@ -1158,13 +1182,28 @@ async function gApply(){
   const ok=await ask({title:`Apply to ${sel.length} card${sel.length===1?"":"s"} in admin?`,
     body:`${dry?"<b>Dry run:</b> nothing is written.<br><br>":""}${corners?`<div class="planline"><b>1 · ${gParts().map(p=>p[0].toUpperCase()+p.slice(1)+"s").join(" + ")} → none</b><br>${gParts().includes("corner")?"All four corners get a Review Override with every annotation at <b>none</b>":""}${gParts().includes("corner")&&gParts().length>1?"; ":""}${gParts().includes("edge")?"all four edges get a Review Override with their annotations <b>removed</b>":""}${gParts().includes("edge")&&gParts().includes("surface")?"; ":""}${gParts().includes("surface")?"front and back surface get a Review Override with their annotations <b>removed</b> (saved as an override, like admin)":""}. All under your name.</div>`:""}
       ${zeros?`<div class="planline"><b>${corners?"2":"1"} · Grades → 0</b>, then approved (label and slab rebuilt)<ul class="taglist gl">${zl.join("")}</ul></div>`:""}
+      ${gTagsOn()?`<div class="planline"><b>${1+(corners?1:0)+(zeros?1:0)} · Tags</b>, added last, keeping each card's other tags: ${tagPills(S.tag)}</div>`:""}
       <div class="dim small">Runs in this order. Each step can be undone from Recent runs.</div>`,
     yes:dry?"Run dry run":"Yes, apply"});
   if(!ok) return;
-  let first="";
-  if(corners){ await cornersNone({noAsk:true,skipImages:zeros&&!dry,parts:gParts()}); first=$("#barmsg").innerHTML; gSync(); render(); } // the grade save rebuilds the label anyway
-  if(geCount()>0){ await saveOverall({noAsk:true}); if(first) $("#barmsg").innerHTML=first+"<br>"+$("#barmsg").innerHTML; }
-  else if(first) $("#barmsg").innerHTML=first; // keep the result on screen (the redraw puts the plan text back)
+  // one progress bar per step (green = done, red = failed); the per-card detail folds away under "Details"
+  const steps=[], details=[], N=sel.length, zN=Object.values(S.ge).filter(o=>Object.keys(o).length).length;
+  if(corners) steps.push({k:"c",label:gParts().map(p=>p[0].toUpperCase()+p.slice(1)+"s").join(" + ")+" → none",n:N});
+  if(zeros) steps.push({k:"z",label:"Grades → 0 + approve",n:zN});
+  if(gTagsOn()) steps.push({k:"t",label:"Tags",n:N});
+  const pct=(x,n)=>n?Math.round(100*x/n):0;
+  const draw=()=>{ $("#barmsg").innerHTML=`<div class="prog" role="status" aria-live="polite">${steps.map(st=>`<div class="pstep ${st.state||"wait"}"><span class="plabel">${esc(st.label)}</span>
+      <div class="pbar" aria-hidden="true"><i style="width:${st.state==="done"?pct(st.ok,st.n):0}%"></i><b style="width:${st.state==="done"?pct(st.fail,st.n):0}%"></b></div>
+      <span class="pnum">${st.state==="run"?"working…":st.state==="done"?`${st.ok}/${st.n}${st.fail?` · <span class="obad">${st.fail} failed</span>`:""}`:"waiting"}</span></div>`).join("")}
+      ${details.length?`<details class="pdet"><summary>Details · undo from Recent runs</summary>${details.join("<br>")}</details>`:""}</div>`; };
+  const run=async(k,fn)=>{ const st=steps.find(x=>x.k===k); st.state="run"; draw(); await fn(st); st.state="done"; draw(); };
+  draw();
+  if(corners) await run("c",async st=>{ const r=await cornersNone({noAsk:true,skipImages:zeros&&!dry,parts:gParts()});
+    st.ok=r&&r.dry_run?(r.would_write||0):(r&&r.succeeded)||0; st.fail=(r&&r.failed)||0; details.push($("#barmsg").innerHTML); gSync(); render(); });
+  if(zeros&&geCount()>0) await run("z",async st=>{ const r=await saveOverall({noAsk:true});
+    st.ok=r&&r.dry_run?(r.would_write||0):(r&&r.succeeded)||0; st.fail=r&&r.error?st.n:((r&&r.failed)||0)+((r&&r.mismatch)||0); details.push($("#barmsg").innerHTML); });
+  if(gTagsOn()) await run("t",async st=>{ const r=await gTagStep(sel.map(x=>x.item_id),dry); st.ok=r.ok; st.fail=r.fail; details.push(r.html); });
+  draw();
 }
 function restorePanel(locked,key){
   const busy=key==="archive"?"archived":"pending_rescan", cur=(S.rs||{})[key]||"";
@@ -1374,6 +1413,7 @@ async function cornersNone(opts={}){
   const none=(r.cards||[]).filter(c=>!c.changed.length&&!c.error).length;
   $("#barmsg").innerHTML=r.dry_run?`<b>Dry run:</b> ${r.would_write||0} card${r.would_write===1?"":"s"} would have corners overridden${none?` · ${none} already none`:""}. ${lines.join(" · ")}`
     :`<b class="done-badge" style="font-size:14px">✓ ${(opts.parts||["corner"]).map(p=>p[0].toUpperCase()+p.slice(1)+"s").join(" + ")} → none on ${r.succeeded} card${r.succeeded===1?"":"s"}</b>${r.failed?` <span class="warn-txt">${r.failed} failed</span>`:""}${none?` · ${none} already none`:""}${moved?` · <b>${moved}</b> Corners subgrade changed: check RECHECK cards' overall`:""}<br>${lines.join(" · ")} <span class="dim">· undo from Recent runs</span>`;
+  return r;
 }
 // Set all four subgrades and the overall to 0 (only the ones not already 0 count as changes)
 function geZero(ids){ for(const id of ids){ S.geOpen[id]=true; for(const [k] of GKEYS) geSet(id,k,"0"); } }
@@ -1421,7 +1461,8 @@ async function saveOverall(opts={}){
       }catch(e){ $("#barmsg").innerHTML+=` · <span class="obad">tag not applied: ${esc(e.message)}</span>`; }
     }
     renderHistory&&renderHistory();
-  }catch(err){ $("#barmsg").innerHTML=`<span class="warn-txt">${esc(err.message)}</span>`; }
+    return r;
+  }catch(err){ $("#barmsg").innerHTML=`<span class="warn-txt">${esc(err.message)}</span>`; return {error:err.message}; }
   finally{ b.disabled=false; ovButton(); }
 }
 $("#ovBtn").onclick=saveOverall;
