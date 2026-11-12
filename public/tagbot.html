@@ -445,6 +445,12 @@ dialog.info{max-width:760px;width:calc(100% - 32px);padding:0}
 .pill.new{border-color:var(--go);color:var(--go)}
 /* required tag (*name): filled green, like admin's Edit Tags */
 .reqtog input{accent-color:var(--go)}
+.tps{display:inline-flex;flex-wrap:wrap;gap:4px}
+.tp{display:inline-block;border-radius:999px;padding:1px 9px;font-size:12px;font-weight:700;line-height:1.5;border:1px solid var(--text);color:var(--text);background:transparent}
+.tp.req{background:var(--go);border-color:var(--go);color:var(--go-ink,#04120a)}
+.tp.pend{border-color:#ffa31a;color:#ffa31a;background:transparent}
+.tp.pend.req{background:#ffa31a;border-color:#ffa31a;color:#2a1700}
+.tp.rm{border-color:#ff8a80;color:#ff8a80;background:transparent;text-decoration:line-through}
 .pill.cur{border-color:var(--line);color:var(--text)}
 .pill.cur.req{background:color-mix(in srgb,var(--go) 30%,transparent);border-color:var(--go);color:var(--text)}
 .pill.req{background:var(--go);border-color:var(--go);color:var(--go-ink,#04120a);font-weight:700}
@@ -1628,6 +1634,17 @@ const normTag=t=>String(t||"").toLowerCase().trim().replace(/\s+/g,"_");
 function tagChips(){ const l=String(S.tag||"").split(",").map(x=>x.trim()).filter(Boolean); return normTag(S.tagDraft)?l.slice(0,-1):l; }
 function setTags(chips,draft){ S.tagDraft=draft||""; S.tag=[...chips,normTag(draft)].filter(Boolean).join(","); }
 const tagsReq=t=>{ const l=String(t||"").split(",").map(x=>x.trim()).filter(Boolean); return l.length>0&&l.every(x=>x.startsWith("*")); };
+// Tile tags: required first (green), then regular (white), in the card's order.
+// Typed in the box: Add → orange pills for tags the card doesn't have yet; Remove → the card's matching tags struck out in red.
+function cardTagLine(r,on){
+  const cur=tagList(r.tag), sorted=[...cur.filter(t=>t.startsWith("*")),...cur.filter(t=>!t.startsWith("*"))];
+  const typed=S.phase==="review"&&on?tagList(S.tag):[], has=t=>cur.some(c=>tagBase(c)===tagBase(t));
+  const rmHit=t=>S.action==="clear"&&typed.some(x=>tagBase(x)===tagBase(t));
+  const pill=(t,cls)=>`<span class="tp${t.startsWith("*")?" req":""}${cls?" "+cls:""}" title="${t.startsWith("*")?"required tag":"tag"}${cls==="pend"?" · will be added":cls==="rm"?" · will be removed":""}">${esc(tagBase(t))}</span>`;
+  const pend=S.action==="set"?typed.filter(t=>!has(t)):[];
+  const html=sorted.map(t=>pill(t,rmHit(t)?"rm":"")).join("")+[...pend.filter(t=>t.startsWith("*")),...pend.filter(t=>!t.startsWith("*"))].map(t=>pill(t,"pend")).join("");
+  return html?`<span class="tps">${html}</span>`:`<span class="dim small">no tags</span>`;
+}
 const tagPills=(t,cls="new")=>String(t||"").split(",").map(x=>x.trim()).filter(Boolean).map(x=>x.startsWith("*")?`<span class="pill ${cls} req" title="required tag">${esc(x.slice(1))}</span>`:`<span class="pill ${cls}">${esc(x)}</span>`).join("");
 const TAGS_OK=t=>{ const l=String(t||"").split(",").map(x=>x.trim()).filter(Boolean); return l.length>0&&l.every(x=>/^\*?[a-z0-9_]{1,64}$/.test(x)); }; // *tag = required
 function render(){ if(S&&S.kind==="arena"&&S.gp) gSync(); renderInner(); clearWatchPhotos($("#grid")); ovButton(); const ba=$("#backAll"); if(ba) ba.onclick=backToAll; }
@@ -1714,8 +1731,8 @@ function tile(r){
     const wasHtml=S.undone?"":`<span class="dim">was</span> ${was?`<span class="pill old">${esc(was)}</span>`:`<span class="dim">no tag</span>`}`;
     change=`<div class="nowline"><span class="dim">${S.dry?"would be":"now"}</span> ${nowHtml}</div>${wasHtml?`<div class="nowline">${wasHtml}</div>`:""}`;
   }
-  else if(S.action==="clear") change=`<span class="pill old">${esc(r.tag)}</span><span class="dim">→ no tag</span>`;
-  else change=`${r.tag?(NOUN()==="watches"?`<span class="pill old">${esc(r.tag)}</span>`:tagPills(r.tag,"cur")):""}${S.tag?tagPills(S.tag):`<span class="pill new">tag</span>`}`; // cards keep their other tags
+  else if(NOUN()==="watches") change=S.action==="clear"?`<span class="pill old">${esc(r.tag)}</span><span class="dim">→ no tag</span>`:`${r.tag?`<span class="pill old">${esc(r.tag)}</span>`:""}<span class="pill new">${esc(S.tag||"tag")}</span>`;
+  else change=cardTagLine(r, on); // cards: their tags, plus what's typed in the box
   if(r.kind==="watch") return watchTile(r,on,change);
   // Archived Cards / Watches pills: same tile as the Cards / Watches tiles, plus the archive rows
   if(r.kind==="archived"&&r.view==="arch_watches") return arenaTile(r,withArch(watchTile(asWatch(r),on,change),r));
