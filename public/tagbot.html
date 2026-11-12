@@ -317,6 +317,8 @@ h1 span{color:var(--go)}
 .nrow.done{opacity:.6}
 .nrow .npills{display:inline-flex;margin:4px 14px 2px 0}
 .nrowh{font-size:13px}
+.gp.tsub.on,.gp.gtask.on{background:var(--warn);border-color:var(--warn);color:#1a1200}
+.gp.tsub[disabled]{opacity:.45}
 .gstep{display:inline-grid;place-items:center;width:17px;height:17px;margin-right:6px;border-radius:50%;font-size:11px;font-weight:800;background:var(--line);color:var(--text)}
 .sabtn.on .gstep{background:rgba(0,0,0,.25);color:inherit}
 .planline{margin:0 0 10px;padding:8px 10px;border:1px solid var(--line);border-radius:8px}
@@ -1092,26 +1094,31 @@ function statusActions(locked){
     ${list.length?`<button type="button" class="btn link" id="saCancel" ${locked?"disabled":""}>Back to tagging</button>`:""}</div>
     ${list.map(a=>TSK[a.key]&&a.op==="apply"?archivePanel(locked,a.key):TSK[a.key]&&a.op==="remove"?restorePanel(locked,a.key):"").join("")}`;
 }
-// Grades row (Arena Club): ① Clear overall → 0, ② Clear subgrades → 0, ③ Remove subgrades task, then pick the subgrades.
-// Apply fills the zeros into the selected cards' grade editors and opens Save & approve (the usual confirm + write).
-// ③ isn't connected to admin yet (needs a capture); it's shown as a preview.
+// Grades row (Arena Club): ① Clear overall → 0, ② Clear subgrades → 0 (pick which, green), ③ Remove subgrades task (pick which, amber).
+// Apply: the zeros go through the usual Save & approve; then ③ Corners runs the corner Review Override → none (cornersNone).
+// ③ Centering / Edges / Surface aren't connected yet (need Review Override captures).
 const G_SUBS=[["centering","Centering"],["corners","Corners"],["edges","Edges"],["surface","Surface"]];
-function gPlan(){ return S.gp||(S.gp={overall:false,clear:false,task:false,subs:new Set()}); }
-function gActive(){ const g=gPlan(); return g.overall||((g.clear||g.task)&&g.subs.size>0); }
+const G_TASK_READY=new Set(["corners"]);
+function gPlan(){ return S.gp||(S.gp={overall:false,clear:false,task:false,subs:new Set(),tsubs:new Set()}); }
+function gTaskOn(){ const g=gPlan(); return g.task&&[...g.tsubs].some(k=>G_TASK_READY.has(k)); }
+function gActive(){ const g=gPlan(); return g.overall||(g.clear&&g.subs.size>0)||gTaskOn(); }
 function gradesRow(locked){
   const g=gPlan();
-  const pill=(attr,on,l,step)=>`<button type="button" class="sabtn gp${on?" on":""}" ${attr} aria-pressed="${on}" ${locked?"disabled":""}>${step?`<span class="gstep">${step}</span>`:""}${l}</button>`;
+  const pill=(attr,on,l,step,cls="",dis=false,title="")=>`<button type="button" class="sabtn gp${cls}${on?" on":""}" ${attr} aria-pressed="${on}" ${locked||dis?"disabled":""}${title?` title="${title}"`:""}>${step?`<span class="gstep">${step}</span>`:""}${l}</button>`;
   return `<div class="sact" role="group" aria-label="Grades"><span class="dim small">Grades:</span>
-    <span class="sagrp">${pill('data-g="overall"',g.overall,"Clear overall","1")}${pill('data-g="clear"',g.clear,"Clear subgrades","2")}${pill('data-g="task"',g.task,"Remove subgrades task"+(DEMO?"":" (soon)"),"3")}</span>
+    <span class="sagrp">${pill('data-g="overall"',g.overall,"Clear overall","1")}${pill('data-g="clear"',g.clear,"Clear subgrades","2")}${pill('data-g="task"',g.task,"Remove subgrades task","3"," gtask")}</span>
   </div>
-  ${g.clear||g.task?`<div class="sact" role="group" aria-label="Subgrades"><span class="dim small">Subgrades:</span>
+  ${g.clear?`<div class="sact" role="group" aria-label="Subgrades to clear"><span class="dim small"><span class="gstep">2</span>Clear:</span>
     <span class="sagrp">${G_SUBS.map(([k,l])=>pill(`data-gs="${k}"`,g.subs.has(k),l)).join("")}</span>
-    <span class="dim small">${g.clear?"lit = set to 0 · click one to keep its original number":"lit = remove its task"}</span></div>`:""}`;
+    <span class="dim small">lit = set to 0 · click one to keep its original number</span></div>`:""}
+  ${g.task?`<div class="sact" role="group" aria-label="Subgrade tasks to remove"><span class="dim small"><span class="gstep">3</span>Remove:</span>
+    <span class="sagrp">${G_SUBS.map(([k,l])=>G_TASK_READY.has(k)?pill(`data-gt="${k}"`,g.tsubs.has(k),l,""," tsub"):pill(`data-gt="${k}"`,false,l+" (soon)",""," tsub",true,"Needs a Review Override capture for "+l.toLowerCase())).join("")}</span>
+    <span class="dim small">Review Override every annotation to <b>None</b> and approve</span></div>`:""}`;
 }
 function gSummary(){ const g=gPlan(), parts=[], names=G_SUBS.filter(([k])=>g.subs.has(k)).map(([,l])=>l.toLowerCase()).join(", ");
   if(g.overall) parts.push("set the <b>overall</b> to 0");
   if(g.clear&&g.subs.size) parts.push(`set <b>${names}</b> to 0`);
-  if(g.task&&g.subs.size) parts.push(`remove the <b>${names}</b> subgrade task${g.subs.size===1?"":"s"}`);
+  if(gTaskOn()) parts.push(`override every <b>corner</b> annotation to none`);
   return parts.join(", then "); }
 // Show the zeros on the cards as soon as ① / ② / the subgrade pills change (selected cards only); unpicking puts the old value back
 function gSync(){
@@ -1123,14 +1130,11 @@ function gSync(){
 async function gApply(){
   const g=gPlan(), ids=S.rows.filter(r=>S.selected.has(r.item_id)).map(r=>r.item_id);
   if(!ids.length){ $("#barmsg").innerHTML=`<span class="warn-txt">Select the cards first.</span>`; return; }
-  const zeros=[...(g.overall?["overall"]:[]),...(g.clear?[...g.subs]:[])];
-  gSync();
-  const taskNote=g.task&&g.subs.size?` <span class="warn-txt">Remove subgrades task isn't connected to admin yet, so it was skipped.</span>`:"";
-  render();
-  if(!zeros.length){ $("#barmsg").innerHTML=taskNote||""; return; }
-  if(!geCount()){ $("#barmsg").innerHTML=`<span class="warn-txt">Those grades are already 0.</span>${taskNote}`; return; }
-  await saveOverall();
-  if(taskNote) $("#barmsg").innerHTML+=taskNote;
+  gSync(); render();
+  const zeros=geCount()>0;
+  if(zeros){ const before=Object.keys(S.ge||{}).length; await saveOverall(); if(Object.keys(S.ge||{}).length===before) return; } // cancelled or failed: stop
+  if(gTaskOn()){ await cornersNone(); return; }
+  if(!zeros) $("#barmsg").innerHTML=`<span class="warn-txt">Those grades are already 0.</span>`;
 }
 function restorePanel(locked,key){
   const busy=key==="archive"?"archived":"pending_rescan", cur=(S.rs||{})[key]||"";
@@ -1326,7 +1330,7 @@ async function cornersNone(){
       <div class="dim small" style="margin-top:8px">Credited to your grader profile, with no accuracy score. You can undo from Recent runs (it overrides each corner back).</div>`,
     yes:dry?"Run dry run":"Yes, set corners to none"});
   if(!ok) return;
-  const b=$("#cornersBtn"); if(b){ b.disabled=true; b.textContent="Working…"; }
+  const b=$("#confirmBtn"); if(b) b.disabled=true;
   $("#barmsg").innerHTML=`<span class="spin"></span>${dry?"Reading corners":"Overriding corners"}… ${sel.length} card${sel.length===1?"":"s"}`;
   let r; try{ r=await api("corners",{text:S.text,item_ids:sel.map(x=>x.item_id),dry_run:dry}); }
   catch(e){ if(b) b.disabled=false; render(); $("#barmsg").innerHTML=`<span class="warn-txt">${esc(e.message)}</span>`; return; }
@@ -1572,7 +1576,6 @@ function renderInner(){
           <option value="evhigh"${S.sort==="evhigh"?" selected":""}>EV: high → low</option>
           <option value="evlow"${S.sort==="evlow"?" selected":""}>EV: low → high</option></select>
         ${S.kind==="arena"?`
-        <button type="button" class="btn" id="cornersBtn" title="Set every corner annotation to none on the selected cards: a corner override + approve per corner, like the grading page, then the label and slab are rebuilt">Corners → none (${S.rows.filter(r=>S.selected.has(r.item_id)).length})</button>
         <button type="button" class="btn only75${S.only75?" on":""}" id="only75" aria-pressed="${!!S.only75}">${S.only75?"✓ ":""}Only ≤ 7.5 / auth</button>
         <button type="button" class="btn" id="liveBtn" title="Re-read every card's grades, slab and tag straight from admin (Metabase updates on a delay)">↻ Refresh from admin</button>`:ARCHK(S.kind)||S.kind==="cards"||S.kind==="watches"?`
         <button type="button" class="btn" id="archLiveBtn" title="Re-read every card's status, authentication status, tag and photo straight from admin (Metabase updates on a delay)">↻ Refresh from admin</button>`:""}</div>
@@ -1934,7 +1937,7 @@ function renderBar(n,replacing){
   if(S&&S.kind==="arena"&&gActive()&&S.phase==="review"){
     // count only the cards that will actually change; ones already at 0 are skipped
     const sel=S.rows.filter(r=>S.selected.has(r.item_id)), g=gPlan(), n=sel.filter(r=>S.ge[r.item_id]&&Object.keys(S.ge[r.item_id]).length).length;
-    const zeroOnly=!(g.task&&g.subs.size), same=sel.length-n;
+    const zeroOnly=!gTaskOn(), same=sel.length-n;
     cb.hidden=false; cb.disabled=zeroOnly&&!n; cb.className="btn big primary"; cb.textContent=`Apply to admin (${zeroOnly?n:sel.length})`;
     msg.innerHTML=`On <b>${n}</b> card${n===1?"":"s"}: ${gSummary()}.${same&&zeroOnly?` <span class="dim">${same} already 0, skipped.</span>`:""}`;
     return;
@@ -1980,16 +1983,16 @@ function bindSummary(){
   const alb=$("#archLiveBtn"); if(alb) alb.onclick=async()=>{ alb.disabled=true; alb.textContent="Refreshing…"; await refreshArchived(); };
   const o75=$("#only75"); if(o75) o75.onclick=()=>{ S.only75=!S.only75; recompute(true); };
   // Corners → none: override + approve each corner with every annotation at none (admin recalculates Corners)
-  const cnb=$("#cornersBtn"); if(cnb) cnb.onclick=()=>cornersNone();
+
   document.querySelectorAll(".sabtn").forEach(b=>b.onclick=()=>{ const k=b.dataset.sk, op=b.dataset.sop; S.plan=S.plan||{};
     if(S.plan[k]===op) delete S.plan[k]; else S.plan[k]=op;            // click again to unpick; Apply ↔ Remove swaps
     S.sact=planList()[0]||null; render();
     if(S.plan[k]){ const mine=S; liveDates(S.rows.filter(r=>S.selected.has(r.item_id))).then(()=>{ if(S===mine&&planList().length){ recompute(false); render(); } }).catch(()=>{}); } });
   document.querySelectorAll(".gp").forEach(b=>b.onclick=()=>{ const g=gPlan();
     if(b.dataset.g==="overall") g.overall=!g.overall;
-    else if(b.dataset.g==="clear"){ g.clear=!g.clear; if(g.clear) G_SUBS.forEach(([k])=>g.subs.add(k)); else if(!g.task) g.subs.clear(); } // ② clears all four; unlight one to keep it
-    else if(b.dataset.g==="task"){ if(!DEMO&&!g.task){ $("#barmsg").innerHTML=`<span class="warn-txt">Remove subgrades task needs an admin capture before it can write. Clear overall and Clear subgrades work now.</span>`; return; }
-      g.task=!g.task; if(!g.clear&&!g.task) g.subs.clear(); }
+    else if(b.dataset.g==="clear"){ g.clear=!g.clear; if(g.clear) G_SUBS.forEach(([k])=>g.subs.add(k)); else g.subs.clear(); } // ② clears all four; unlight one to keep it
+    else if(b.dataset.g==="task"){ g.task=!g.task; if(g.task) g.tsubs=new Set([...G_TASK_READY]); else g.tsubs.clear(); }
+    else if(b.dataset.gt){ const k=b.dataset.gt; if(G_TASK_READY.has(k)) g.tsubs.has(k)?g.tsubs.delete(k):g.tsubs.add(k); }
     else if(b.dataset.gs){ const k=b.dataset.gs; g.subs.has(k)?g.subs.delete(k):g.subs.add(k); }
     render(); });
   document.querySelectorAll(".saRestore").forEach(x=>x.onchange=()=>{ (S.rs=S.rs||{})[x.dataset.key]=x.value; });

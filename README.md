@@ -152,7 +152,7 @@ One card or a batch (up to `MAX_ARCHIVE_PER_RUN`), with the same note pills and 
 
 ## Corners → none (Arena Club tile)
 
-**Corners → none (N)** sets every corner annotation to `none` on the selected cards, the same way as editing a corner on the grading page and clicking Approve (captured from admin):
+**③ Remove subgrades task → Corners** (Grades row) sets every corner annotation to `none` on the selected cards, the same way as editing a corner on the grading page and clicking Approve (captured from admin):
 
 | Step | Call |
 |---|---|
@@ -166,4 +166,4 @@ Corners already at none are skipped. Admin recalculates the Corners subgrade; th
 
 ## Grades row (Arena Club tile)
 
-Above Change status: **① Clear overall**, **② Clear subgrades**, **③ Remove subgrades task**, then pick the subgrades (Centering / Corners / Edges / Surface). **Apply to admin (N)** fills 0 into the selected cards' overall and the picked subgrades, then opens the usual Save & approve confirm (label + slab rebuilt, approved, undo from Recent runs). ③ isn't connected yet: it needs an admin capture of removing a subgrade task.
+Above Change status: **① Clear overall**, **② Clear subgrades**, **③ Remove subgrades task**, then pick the subgrades (Centering / Corners / Edges / Surface). **Apply to admin (N)** fills 0 into the selected cards' overall and the picked subgrades, then opens the usual Save & approve confirm (label + slab rebuilt, approved, undo from Recent runs). ③ Remove subgrades task (amber row): **Corners** runs the corner Review Override → none below, after any zeros are saved; Centering / Edges / Surface show "(soon)" until their Review Override is captured.
