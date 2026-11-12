@@ -445,6 +445,8 @@ dialog.info{max-width:760px;width:calc(100% - 32px);padding:0}
 .pill.new{border-color:var(--go);color:var(--go)}
 /* required tag (*name): filled green, like admin's Edit Tags */
 .reqtog input{accent-color:var(--go)}
+.astatus{flex-wrap:wrap;gap:4px;justify-content:flex-start}
+.ast.st-not_accepted{background:#ff5a4a;border-color:#ff5a4a;color:#fff}
 .tps{display:inline-flex;flex-wrap:wrap;gap:4px}
 .tp{display:inline-block;border-radius:999px;padding:1px 9px;font-size:12px;font-weight:700;line-height:1.5;border:1px solid var(--text);color:var(--text);background:transparent}
 .tp.req{background:var(--go);border-color:var(--go);color:var(--go-ink,#04120a)}
@@ -1127,6 +1129,11 @@ const sprop=field=>field==="auth"?"auth_status":field==="archive"?"archived_at":
 // Archive and Pending rescan are admin's date buttons (Archived At / Rescan Requested At → Set / Unset)
 const TSK={archive:{at:"archived_at",live:"archivedAt",what:"archived",field:"Archived At",title:"Archive"},pending_rescan:{at:"rescan_at",live:"rescanRequestedAt",what:"marked for rescan",field:"Rescan Requested At",title:"Rescan"}};
 const fmtAt=v=>{ if(!v) return ""; const d=new Date(String(v).replace(" ","T")); return isNaN(d)?String(v):d.toLocaleString([],{day:"numeric",month:"short",year:"2-digit",hour:"numeric",minute:"2-digit"}); };
+// Arena Club tiles: the card's status and authentication as admin has them (read live after every search / Refresh)
+const arenaStatusRow=r=>{ const auth=String(r.auth_status||"").toLowerCase();
+  const bits=[r.status?stHtml(r.status):"", auth&&auth!=="none"?`<span class="ast st-not_accepted st-bad">${esc(auth==="not_accepted"?"Not accepted":r.auth_status)}</span>`:"",
+    r.archived_at?`<span class="ast st-archived" title="Archived At">archived ${esc(fmtAt(r.archived_at))}</span>`:"", r.rescan_at?`<span class="ast st-pending_rescan" title="Rescan Requested At">rescan ${esc(fmtAt(r.rescan_at))}</span>`:""].filter(Boolean);
+  return bits.length?`<div class="arow astatus">${bits.join("")}</div>`:""; };
 const arcHtml=r=>r&&r.archived_at?`<span class="ast st-archived">${esc(fmtAt(r.archived_at))}</span>`:"";
 const rscHtml=r=>r&&r.rescan_at?`<span class="ast st-pending_rescan">${esc(fmtAt(r.rescan_at))}</span>`:"";
 // Status changes: pick Apply or Remove in any group (one per group). Confirm runs them in order:
@@ -1845,6 +1852,7 @@ function arenaInfo(r){
   const appr=r.ev_date?new Date(r.ev_date):null;
   const apprTxt=appr&&!isNaN(appr)?appr.toLocaleDateString([], {month:"2-digit",day:"2-digit",year:"numeric"}):"";
   return `<div class="meta am">${esc(r.set_name)}${r.insert?" · "+esc(r.insert):""}${r.set_number?` · <b>#${esc(r.set_number)}</b>`:""}${r.parallel_name?"<br>"+esc(r.parallel_name):""}</div>
+    ${arenaStatusRow(r)}
     ${subgBox(r)}
     <div class="arow"><span>AC <b>${esc(r.ac)}</b>${r.ac?cp(r.ac):""}</span><span class="ev">${money(r.ev)}</span></div>
     ${r.last_comp!=null?`<div class="arow"><span>Last comp <b>${money(r.last_comp)}</b></span></div>`:""}
