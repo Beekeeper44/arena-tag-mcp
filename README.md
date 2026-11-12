@@ -149,3 +149,21 @@ Every PATCH is checked against the card admin sends back. If the log isn't saved
 | Unset | `PATCH /cards/{id} { rescanRequestedAt: null }` |
 
 One card or a batch (up to `MAX_ARCHIVE_PER_RUN`), with the same note pills and **Set all** as Archive. No customer-email or box confirmation.
+
+## Corners → none (Arena Club tile)
+
+**Corners → none (N)** sets every corner annotation to `none` on the selected cards, the same way as editing a corner on the grading page and clicking Approve (captured from admin):
+
+| Step | Call |
+|---|---|
+| Grader | `GET /users/{adminUserId}/grader` → the signed-in person's grader id |
+| Corners | `GET /grading_tasks?where=card_id={cardId}` → the 4 `kind:"corner"` tasks; current labels come from each corner's newest approved / override grade |
+| Override | `POST /grades/corner { kind:"review", status:"reviewer_override", labels (severity "none"), side, cardId, gradingTaskId, picture ids, graderId, userId, name, expectedAccuracy:null }` |
+| Approve | `PATCH /grades/corner/{id} { status:"approved", labels, notes:[{kind:"secondary", note:"Corner Auto Approved"}] }` |
+| Images | `PATCH /cards/generate_label_images`, `/cards/generate_slab_images` (once per card) |
+
+Corners already at none are skipped. Admin recalculates the Corners subgrade; the overall isn't changed, so cards whose subgrades moved show **RECHECK**. Dry run reads and reports only. Undo (Recent runs) overrides each corner back to its previous labels. Limit: `MAX_ARCHIVE_PER_RUN` cards (8 admin calls per card).
+
+## Grades row (Arena Club tile)
+
+Above Change status: **① Clear overall**, **② Clear subgrades**, **③ Remove subgrades task**, then pick the subgrades (Centering / Corners / Edges / Surface). **Apply to admin (N)** fills 0 into the selected cards' overall and the picked subgrades, then opens the usual Save & approve confirm (label + slab rebuilt, approved, undo from Recent runs). ③ isn't connected yet: it needs an admin capture of removing a subgrade task.

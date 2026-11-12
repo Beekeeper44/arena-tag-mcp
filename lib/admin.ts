@@ -393,3 +393,62 @@ export async function liveCards(session: AdminSession, ids: string[]) {
   await Promise.all(Array.from({ length: Math.min(16, ids.length) }, async () => { while (next < ids.length) await one(ids[next++]); }));
   return out;
 }
+
+// ---------- Corners → none: the grading page's corner "Review Override" + Approve, captured from admin ----------
+//   GET  /users/{adminUserId}/grader                    → the signed-in person's grader id
+//   GET  /grading_tasks?where=card_id={cardId}          → the card's 4 corner tasks (side top_left / top_right / bottom_left / bottom_right)
+//   POST /grades/corner        { kind:"review", status:"reviewer_override", labels (every severity "none"), side, cardId, gradingTaskId, picture ids, graderId, userId, name, timing }
+//   PATCH /grades/corner/{id}  { status:"approved", labels, notes:[{kind:"secondary", note:"Corner Auto Approved", …}], timing }
+// Admin then recalculates the card's Corners subgrade itself; the label and slab are rebuilt after (regenerateImages).
+export type CornerLabel = { kind: string; side: string; severity: string; [k: string]: unknown };
+export type CornerNow = { taskId: string; side: string; labels: CornerLabel[]; frontPictureId: string | null; backPictureId: string | null };
+const CORNER_SIDES = ["top_left", "top_right", "bottom_left", "bottom_right"];
+async function adminJson(session: AdminSession, path: string, method = "GET", body?: unknown) {
+  const r = await fetch(`${config.adminApiUrl()}${path}`, { method, headers: headers(session.accessToken), body: body === undefined ? undefined : JSON.stringify(body) });
+  const text = await r.text();
+  if (!r.ok) throw new Error(`${method} ${path.split("?")[0]} ${r.status}: ${text.slice(0, 200)}`);
+  try { return JSON.parse(text); } catch { return null; }
+}
+export async function graderIdFor(session: AdminSession, adminUserId: string): Promise<string> {
+  const g = await adminJson(session, `/users/${adminUserId}/grader`);
+  if (!g?.id) throw new Error("This admin login has no grader profile, so corner overrides can't be credited to it.");
+  return String(g.id);
+}
+/** Each corner's current labels: from its newest approved / override grade (the model's own guess only if nothing else). */
+export async function cornersNow(session: AdminSession, cardId: string): Promise<CornerNow[]> {
+  const j = await adminJson(session, `/grading_tasks?where=card_id=${cardId}`);
+  const tasks: any[] = Array.isArray(j?.data) ? j.data : Array.isArray(j) ? j : [];
+  const out: CornerNow[] = [];
+  for (const t of tasks) {
+    if (t?.kind !== "corner" || !CORNER_SIDES.includes(t.side)) continue;
+    const gs: any[] = (Array.isArray(t.grades) ? t.grades : []).slice().sort((a: any, b: any) => String(b.createdAt).localeCompare(String(a.createdAt)));
+    const g = gs.find((x) => x.status === "approved" || x.status === "reviewer_override") ?? gs[0];
+    if (!g) continue;
+    out.push({ taskId: t.id, side: t.side, labels: (Array.isArray(g.labels) ? g.labels : []).map((l: any) => ({ kind: l.kind, side: l.side, severity: l.severity })),
+      frontPictureId: g.frontPictureId ?? null, backPictureId: g.backPictureId ?? null });
+  }
+  return out.sort((a, b) => CORNER_SIDES.indexOf(a.side) - CORNER_SIDES.indexOf(b.side));
+}
+/** Override one corner with these labels and approve it, as the grading page does. */
+export async function overrideCorner(session: AdminSession, cardId: string, c: CornerNow, labels: CornerLabel[], who: { userId: string; graderId: string; name: string }) {
+  const startedAt = new Date().toISOString();
+  const created = await adminJson(session, "/grades/corner", "POST", {
+    backPictureId: c.backPictureId, cardId, duration: 0, expectedAccuracy: null, finishedAt: new Date().toISOString(), frontPictureId: c.frontPictureId,
+    graderId: who.graderId, gradingTaskId: c.taskId, kind: "review", labels, name: who.name, side: c.side, startedAt, status: "reviewer_override", userId: who.userId,
+  });
+  const id = created?.id;
+  if (!id) throw new Error(`${c.side}: admin didn't return the new corner grade`);
+  const finishedAt = new Date().toISOString();
+  const ok = await adminJson(session, `/grades/corner/${id}`, "PATCH", {
+    finishedAt, labels, startedAt, status: "approved", verificationDuration: 0,
+    notes: [{ kind: "secondary", name: who.name, note: "Corner Auto Approved", status: "approved", userId: who.userId, graderId: who.graderId, duration: 0, createdAt: finishedAt }],
+  });
+  if (ok?.status !== "approved") throw new Error(`${c.side}: override saved but not approved (admin shows "${ok?.status ?? "?"}")`);
+  return id as string;
+}
+export async function cardGrades(session: AdminSession, cardId: string) {
+  const j = await adminJson(session, `/cards/${cardId}`);
+  const c = j?.card ?? j ?? {};
+  const n = (v: unknown) => (v === null || v === undefined || v === "" ? null : Number(v));
+  return { corners: n(c.corners), overall: n(c.overall), centering: n(c.centering), edges: n(c.edges), surface: n(c.surface) };
+}

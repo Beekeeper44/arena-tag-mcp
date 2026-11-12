@@ -3,7 +3,7 @@
 import { randomBytes } from "crypto";
 import { config, validateTag } from "./config";
 import { queryCards, queryCardsDetailed, summarize, type CardFilters, type CardRow, type PostFilters } from "./metabase";
-import { openAdminSession, patchTag, regenerateImages, approveReview, changeGradesLikeReview, type WriteResult, type WriteKind } from "./admin";
+import { openAdminSession, patchTag, regenerateImages, approveReview, changeGradesLikeReview, graderIdFor, cornersNow, overrideCorner, cardGrades, type WriteResult, type WriteKind, type CornerLabel } from "./admin";
 import { searchWatches, watchLabel, type WatchRow } from "./watches";
 import { searchArena, type ArenaCard } from "./arena";
 import { searchArchived, type ArchivedCard } from "./archived";
@@ -275,6 +275,16 @@ export async function undoRun(input: { run_id: string; confirm: boolean; request
      SELECT $1, t.item_id, $2, t.prev FROM unnest($3::text[], $4::text[]) AS t(item_id, prev)`,
     [undoId, run.tag, items.map((i) => i.item_id), items.map((i) => i.previous_tag)]
   );
+  // corner runs: override each changed corner back to the labels it had
+  if ((run.kind as string) === "corners") {
+    const back = items.filter((i) => i.previous_tag);
+    const res = await applyCorners(undoId, back.map((i) => { const prev = JSON.parse(i.previous_tag as string) as Record<string, CornerLabel[]>; return { item_id: i.item_id, want: (side: string) => prev[side] ?? null }; }),
+      "restored", input.as_admin_user_id, input.requested_by, false);
+    const st = res.failed ? "partial" : "completed";
+    await q(`UPDATE tag_runs SET status=$2, finished_at=now(), result=$3 WHERE id=$1`, [undoId, st, JSON.stringify({ ...res, cards: undefined })]);
+    await q(`UPDATE tag_runs SET status='undone' WHERE id=$1 AND $2 = 'completed'`, [run.id, st]);
+    return { undo_run_id: undoId, undid: run.id, status: st, ...res, mismatch: 0 };
+  }
   // grade runs: approve the previous grades again (only values that were known; "{}" = nothing to put back)
   const restore = run.kind === "grades" ? items.filter((i) => i.previous_tag && i.previous_tag !== "{}") : items;
   const res = run.kind === "grades"
@@ -640,4 +650,74 @@ export async function runGradeUpdate(input: { text: string; items: { item_id: st
   const status = res.failed ? (res.succeeded ? "partial" : "failed") : "completed";
   await q(`UPDATE tag_runs SET status=$2, finished_at=now(), result=$3 WHERE id=$1`, [id, status, JSON.stringify(res)]);
   return { run_id: id, status, dry_run: false, ...res };
+}
+
+// ---------- Arena Club: every corner annotation → none, overridden + approved like the grading page (logged, undoable) ----------
+// previous_tag keeps each corner's labels before the change, so undo re-overrides them back.
+type CornerPrev = Record<string, CornerLabel[]>;
+async function applyCorners(runId: string, items: { item_id: string; want: (side: string, cur: CornerLabel[]) => CornerLabel[] | null }[], okStatus: string, adminUserId: string | undefined, name: string, dry: boolean) {
+  const userId = adminUserId || config.sessionUserId();
+  const session = await openAdminSession(adminUserId);
+  const cards: { item_id: string; changed: string[]; corners_before: number | null; corners_after: number | null; overall: number | null; error?: string; prev: CornerPrev }[] = [];
+  try {
+    const graderId = dry ? "" : await graderIdFor(session, userId);
+    await pool(items, Math.min(3, config.writeConcurrency()), async (it) => {
+      const row = { item_id: it.item_id, changed: [] as string[], corners_before: null as number | null, corners_after: null as number | null, overall: null as number | null, error: undefined as string | undefined, prev: {} as CornerPrev };
+      try {
+        row.corners_before = (await cardGrades(session, it.item_id)).corners;
+        for (const c of await cornersNow(session, it.item_id)) {
+          const next = it.want(c.side, c.labels);
+          if (!next) continue;
+          row.prev[c.side] = c.labels;
+          row.changed.push(c.side);
+          if (!dry) await overrideCorner(session, it.item_id, c, next, { userId, graderId, name });
+        }
+        if (!dry && row.changed.length) {
+          const r = await regenerateImages(session, it.item_id);
+          if (r.error) row.error = `corners saved; label/slab rebuild failed: ${r.error}`;
+        }
+        const g = await cardGrades(session, it.item_id);
+        row.corners_after = g.corners; row.overall = g.overall;
+      } catch (e) { row.error = e instanceof Error ? e.message : String(e); }
+      cards.push(row);
+    });
+  } finally { await session.revoke(); }
+  const done = cards.filter((c) => c.changed.length && !(c.error && !c.error.startsWith("corners saved")));
+  if (runId) await q(
+    `UPDATE tag_run_items AS i SET status=t.status, error=t.err, previous_tag=COALESCE(t.prev, i.previous_tag), updated_at=now()
+     FROM unnest($2::text[], $3::text[], $4::text[], $5::text[]) AS t(item_id, status, err, prev) WHERE i.run_id=$1 AND i.item_id=t.item_id`,
+    [runId, cards.map((c) => c.item_id), cards.map((c) => (dry ? "dry_run" : !c.changed.length ? "skipped" : done.includes(c) ? okStatus : "failed")),
+     cards.map((c) => c.error ?? null), cards.map((c) => (okStatus === "written" && c.changed.length ? JSON.stringify(c.prev) : null))]
+  );
+  return {
+    cards: cards.map(({ prev, ...c }) => c), written_ids: dry ? [] : done.map((c) => c.item_id), succeeded: dry ? 0 : done.length,
+    failed: cards.filter((c) => c.error && !c.error.startsWith("corners saved")).length, would_write: dry ? cards.filter((c) => c.changed.length).length : undefined,
+    failures: cards.filter((c) => c.error).map((c) => ({ item_id: c.item_id, error: c.error })).slice(0, 20),
+  };
+}
+export async function runCornersNone(input: { text: string; item_ids: string[]; dry_run?: boolean; user: string; as_admin_user_id?: string }) {
+  const ids = [...new Set((input.item_ids || []).filter((x) => /^[0-9a-f-]{36}$/i.test(String(x))))];
+  if (!ids.length) throw new Error("Select the cards first.");
+  if (ids.length > config.maxArchivePerRun()) throw new Error(`${ids.length} cards is over the ${config.maxArchivePerRun()}-card limit for corner overrides.`);
+  const fresh = await searchArena(input.text);
+  const byId = new Map(fresh.rows.map((r) => [r.item_id, r]));
+  const chosen = ids.map((id) => byId.get(id)).filter((c): c is ArenaCard => !!c);
+  if (!chosen.length) throw new Error("None of those cards are in these orders anymore. Search again.");
+  const dry = config.dryRun() || input.dry_run === true;
+  const id = newId();
+  await q(
+    `INSERT INTO tag_runs (id, status, action, tag, mode, filters, post_filters, requested_by, preview_count, staged_by, staged_at, staged_count, approved_by, live_at, dry_run, expires_at, kind)
+     VALUES ($1,'executing','corners',NULL,'overwrite',$2,'{}',$3,$4,$3,now(),$4,$3,now(),$5,$6,'corners')`,
+    [id, JSON.stringify({ text: input.text, source: "arena_club", corners: "none" }), input.user, chosen.length, dry, hoursFromNow(1)]
+  );
+  await q(
+    `INSERT INTO tag_run_items (run_id, item_id, previous_tag, new_tag, label, ev)
+     SELECT $1, t.item_id, NULL, 'none', t.label, t.ev FROM unnest($2::text[], $3::text[], $4::numeric[]) AS t(item_id, label, ev)`,
+    [id, chosen.map((c) => c.item_id), chosen.map((c) => [`order ${c.order_number}`, c.player_name, "corners → none"].join(" · ")), chosen.map((c) => c.ev)]
+  );
+  const toNone = (_: string, cur: CornerLabel[]) => (cur.some((l) => l.severity && l.severity !== "none") ? cur.map((l) => ({ kind: l.kind, side: l.side, severity: "none" })) : null);
+  const res = await applyCorners(id, chosen.map((c) => ({ item_id: c.item_id, want: toNone })), "written", input.as_admin_user_id, input.user, dry);
+  const status = dry ? "dry_run_completed" : res.failed ? (res.succeeded ? "partial" : "failed") : "completed";
+  await q(`UPDATE tag_runs SET status=$2, finished_at=now(), result=$3 WHERE id=$1`, [id, status, JSON.stringify({ ...res, cards: undefined })]);
+  return { run_id: id, status, dry_run: dry, ...res };
 }

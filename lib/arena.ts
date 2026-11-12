@@ -207,7 +207,8 @@ export async function searchArena(text: string) {
   results.forEach((rs, oi) => rs.forEach((r, i) => {
     const c = toCard(r, idKey, oi * 100000 + i, orders[oi]);
     const k = checkBy.get("ac:" + c.ac) ?? checkBy.get("id:" + c.item_id);
-    if (k) Object.assign(c, { overall_check: k.result ?? c.overall_check, centering: k.centering, corners: k.corners, edges: k.edges, surface: k.surface, check_overall: k.overall, expected: k.expected, validation: k.validation });
+    if (k) Object.assign(c, { overall_check: k.result ?? c.overall_check, centering: k.centering, corners: k.corners, edges: k.edges, surface: k.surface, check_overall: k.overall, expected: k.expected, validation: k.validation,
+      check_subs: { centering: k.centering, corners: k.corners, edges: k.edges, surface: k.surface } }); // the subgrades the check was computed on
     if ((c as any).authentic) c.overall_check = "pass"; // Authentic (all 0s) counts as a pass
     byId.set(c.item_id, c);
   }));

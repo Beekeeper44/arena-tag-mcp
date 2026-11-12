@@ -317,6 +317,8 @@ h1 span{color:var(--go)}
 .nrow.done{opacity:.6}
 .nrow .npills{display:inline-flex;margin:4px 14px 2px 0}
 .nrowh{font-size:13px}
+.gstep{display:inline-grid;place-items:center;width:17px;height:17px;margin-right:6px;border-radius:50%;font-size:11px;font-weight:800;background:var(--line);color:var(--text)}
+.sabtn.on .gstep{background:rgba(0,0,0,.25);color:inherit}
 .planline{margin:0 0 10px;padding:8px 10px;border:1px solid var(--line);border-radius:8px}
 .alsona{display:flex;gap:8px;align-items:flex-start;margin:10px 0 6px;font-size:14px;cursor:pointer}
 .alsona input{width:18px;height:18px;accent-color:var(--go);flex:none;margin-top:1px}
@@ -934,6 +936,25 @@ const DEMO_DB=(()=>{
 const DEMO_LABEL={ac_pregraded:"Arena Club pre-graded",ac_raw:"Arena Club raw",cust_pregraded:"Customer pre-graded",cust_raw:"Customer raw",arch_cards:"Cards",arch_watches:"Watches",arch_orders:"Orders"};
 const DEMO_Q={ac_pregraded:45772,ac_raw:45773,cust_pregraded:45775,cust_raw:45774,arch_cards:4131,arch_watches:45046,arch_orders:45805};
 const DEMO_FILLER=/^(orders?|archived?|archive|tag|tags|untag|remove|clear|add|set|show|showing|find|get|give|list|pull|display|see|view|load|me|my|us|cards?|items?|rows?|records?|results?|all|every|everything|anything|please|pls|in|on|of|for|from|a|an|the|them|those|these|it|now|and|with|that|have|has|tagged)$/;
+// Demo Arena Club: two orders, six cards (passes, a fail, a 7.5, an authentic)
+function demoArena(text){
+  const mk=(order,id,ac,name,set,num,c,co,e,su,o,exp)=>({kind:"arena",item_id:id,ac,cert:"",sport:"pokemon",set_name:set,player_name:name,insert:null,set_number:num,
+    grading_company:"arena_club",grade:o===0?"arena_club authentic":"arena_club "+o,grade_num:o,authentic:o===0,overall_check:o===0||o===exp?"pass":"fail",check_from_grade:false,ev:0,tag:null,img:null,card_url:null,
+    order_number:order,order_url:null,status:"pending_release",centering:c,corners:co,edges:e,surface:su,check_overall:o,expected:o===0?null:exp,validation:o===0||o===exp?"PASS":"FAIL",check_subs:{centering:c,corners:co,edges:e,surface:su}});
+  const all=[
+    mk("23117068","5701d606-f92a-48d6-a5fa-698d99ed4765","4380264","Primeape","2024 Pokemon SV · Paldean Fates","046",10,9.5,10,9,9.5,9.5),
+    mk("23117068","21d15c40-2853-453a-86a4-c50dfe394362","4380265","Whimsicott","2024 Pokemon SV · Paldean Fates","035",9.5,9,10,8.5,9,9),
+    mk("23117070","6a1c2f10-1111-4c7e-9a01-00000000a001","4380301","Charizard ex","2023 Pokemon SV · Obsidian Flames","125",10,10,10,10,10,10),
+    mk("23117070","6a1c2f10-1111-4c7e-9a01-00000000a002","4380302","Pikachu","2025 Pokemon SV · Prismatic","062",9.5,9,9,8.5,9,8.5),
+    mk("23117070","6a1c2f10-1111-4c7e-9a01-00000000a003","4380303","Gengar","2024 Pokemon SV · Shrouded Fable","041",8,7.5,8,7.5,7.5,7.5),
+    mk("23117070","6a1c2f10-1111-4c7e-9a01-00000000a004","4380304","Mew ex","2023 Pokemon SV · 151","151",0,0,0,0,0,null),
+  ];
+  const asked=[...text.matchAll(/\d{6,12}/g)].map(m=>m[0]), orders=asked.length?asked:["23117068","23117070"];
+  const cards=all.filter(c=>orders.includes(c.order_number));
+  const sum=orders.map(o=>{ const cs=cards.filter(c=>c.order_number===o); return {order:o,url:null,total:cs.length,low:cs.filter(c=>c.authentic||c.grade_num<=7.5).length,authentic:cs.filter(c=>c.authentic).length,fails:cs.filter(c=>c.overall_check==="fail").length,checked:cs.length,shown:cs.length,check_from_grade:false}; });
+  return {parsed:{action:"set",tag:null,mode:"overwrite",filters:{order:orders.length===1?orders[0]:orders},post_filters:{}},has_filter:true,queries:[],ms:14,total:cards.length,missing:sum.filter(x=>!x.total).map(x=>x.order),cards,orders:sum,
+    card_id:45739,check_card_id:15214,check_connected:true,notice:"Demo data: orders 23117068 and 23117070."};
+}
 function demoFind(body){
   const t0=Date.now(), text=String(body.text||""), v=DEMO_DB[body.view]?body.view:"ac_pregraded";
   if(!ARCHK(body.kind)) return {parsed:{action:"set",tag:null,mode:"overwrite",filters:{},post_filters:{}},has_filter:false,queries:[],ms:0,total:0,missing:[],cards:[],notice:"Demo data is only loaded for the Archived tile. Deploy to Vercel to search Cards, Watches and Arena Club."};
@@ -958,6 +979,7 @@ async function demoApi(path,body){
   await new Promise(r=>setTimeout(r,250));
   if(path==="me") return {name:"Demo user",role:"admin",can_write:true,max_items_per_run:1000,max_archive_per_run:200};
   if(path==="runs"||path==="prompts"||path==="users") return [];
+  if(path==="find"&&(body||{}).kind==="arena") return demoArena(String(body.text||""));
   if(path==="find") return demoFind(body||{});
   if(path==="apply"){
     const ids=(body&&body.item_ids)||[], dry=!!(body&&body.dry_run);
@@ -986,6 +1008,9 @@ async function demoApi(path,body){
     return {restored_ids:Object.keys(prev),restored:Object.keys(prev).length,failed:0,previous:prev};
   }
   if(path==="undo") return {ok:true,restored:0};
+  if(path==="grades"){ const ids=(body.items||[]).map(x=>x.item_id); return {run_id:"demo",status:body.dry_run?"dry_run_completed":"completed",dry_run:!!body.dry_run,would_write:ids.length,written_ids:body.dry_run?[]:ids,succeeded:body.dry_run?0:ids.length,failed:0,mismatch:0,approved:ids.length,rebuilt:ids.length,failures:[]}; }
+  if(path==="corners"){ const ids=body.item_ids||[], cards=ids.map((id,i)=>({item_id:id,changed:i%3===2?[]:["top_left","bottom_left","bottom_right"],corners_before:9,corners_after:i%3===2?9:9.5,overall:9}));
+    return {run_id:"demo",dry_run:!!body.dry_run,cards,succeeded:body.dry_run?0:cards.filter(c=>c.changed.length).length,failed:0,would_write:body.dry_run?cards.filter(c=>c.changed.length).length:undefined,written_ids:[],failures:[]}; }
   if(path==="live"){ const out={}, ids=(body&&body.ids)||[]; for(const list of Object.values(DEMO_DB)) for(const c of list) if(ids.includes(c.item_id)&&!out[c.item_id]) out[c.item_id]={status:c.status,authenticationStatus:c.auth_status,tag:c.tag,archivedAt:c.archived_at||null,rescanRequestedAt:c.rescan_at||null,boxLabel:c.in_box||null}; return out; }
   return {};
 }
@@ -1038,7 +1063,7 @@ async function find(text){
   $("#confirmBtn").hidden=false; $("#dryWrap").hidden=false;
   recompute(true);
   if(ARCHK(S.kind)&&res.card_id){ const b=document.querySelector("#source b"); if(b) b.textContent=`${res.view_label||VIEWS[S.view]} · ${DEMO?"Demo":"Live"} · Metabase ${res.card_id}, fresh every search`; }
-  if(S.kind==="arena"&&res.card_id){ const b=document.querySelector("#source b"); if(b) b.textContent=`Live · Metabase ${res.card_id}${res.check_card_id?` + Overall Check ${res.check_card_id}`:""}, fresh every search`;
+  if(S.kind==="arena"&&res.card_id){ const b=document.querySelector("#source b"); if(b) b.textContent=`${DEMO?"Demo":"Live"} · Metabase ${res.card_id}${res.check_card_id?` + Overall Check ${res.check_card_id}`:""}, fresh every search`;
     if(Number(res.card_id)!==45739) $("#srcMsg").insertAdjacentHTML("afterbegin",`<div class="warn-txt small">Arena Club is reading question ${esc(String(res.card_id))}, not 45739 — ARENA_METABASE_CARD_ID is set in Vercel. Delete it (or set it to 45739) and redeploy.</div>`); }
   if(S.kind==="arena") refreshLive();
   // Metabase lags admin: read status, tag and dates straight from admin right after the search (lists up to 300 cards)
@@ -1062,10 +1087,50 @@ function statusActions(locked){
   const plan=S.plan||{};
   const btn=(k,op)=>`<button type="button" class="sabtn${plan[k]===op?" on":""}${op==="remove"?" rm":""}" data-sk="${k}" data-sop="${op}" aria-pressed="${plan[k]===op}" ${locked?"disabled":""}>${op==="apply"?"Apply":"Remove"}</button>`;
   const list=planList();
-  return `<div class="sact" role="group" aria-label="Change status"><span class="dim small">Change status:</span>
+  return `${S.kind==="arena"?gradesRow(locked):""}<div class="sact" role="group" aria-label="Change status"><span class="dim small">Change status:</span>
     ${Object.entries(SACTS).filter(([k])=>S.kind!=="cards"||k==="archive").map(([k,v])=>`<span class="sagrp"><b class="sa-${k}">${v.label}</b>${btn(k,"apply")}${btn(k,"remove")}</span>`).join("")}
     ${list.length?`<button type="button" class="btn link" id="saCancel" ${locked?"disabled":""}>Back to tagging</button>`:""}</div>
     ${list.map(a=>TSK[a.key]&&a.op==="apply"?archivePanel(locked,a.key):TSK[a.key]&&a.op==="remove"?restorePanel(locked,a.key):"").join("")}`;
+}
+// Grades row (Arena Club): ① Clear overall → 0, ② Clear subgrades → 0, ③ Remove subgrades task, then pick the subgrades.
+// Apply fills the zeros into the selected cards' grade editors and opens Save & approve (the usual confirm + write).
+// ③ isn't connected to admin yet (needs a capture); it's shown as a preview.
+const G_SUBS=[["centering","Centering"],["corners","Corners"],["edges","Edges"],["surface","Surface"]];
+function gPlan(){ return S.gp||(S.gp={overall:false,clear:false,task:false,subs:new Set()}); }
+function gActive(){ const g=gPlan(); return g.overall||((g.clear||g.task)&&g.subs.size>0); }
+function gradesRow(locked){
+  const g=gPlan();
+  const pill=(attr,on,l,step)=>`<button type="button" class="sabtn gp${on?" on":""}" ${attr} aria-pressed="${on}" ${locked?"disabled":""}>${step?`<span class="gstep">${step}</span>`:""}${l}</button>`;
+  return `<div class="sact" role="group" aria-label="Grades"><span class="dim small">Grades:</span>
+    <span class="sagrp">${pill('data-g="overall"',g.overall,"Clear overall","1")}${pill('data-g="clear"',g.clear,"Clear subgrades","2")}${pill('data-g="task"',g.task,"Remove subgrades task"+(DEMO?"":" (soon)"),"3")}</span>
+  </div>
+  ${g.clear||g.task?`<div class="sact" role="group" aria-label="Subgrades"><span class="dim small">Subgrades:</span>
+    <span class="sagrp">${G_SUBS.map(([k,l])=>pill(`data-gs="${k}"`,g.subs.has(k),l)).join("")}</span>
+    <span class="dim small">${g.clear?"lit = set to 0 · click one to keep its original number":"lit = remove its task"}</span></div>`:""}`;
+}
+function gSummary(){ const g=gPlan(), parts=[], names=G_SUBS.filter(([k])=>g.subs.has(k)).map(([,l])=>l.toLowerCase()).join(", ");
+  if(g.overall) parts.push("set the <b>overall</b> to 0");
+  if(g.clear&&g.subs.size) parts.push(`set <b>${names}</b> to 0`);
+  if(g.task&&g.subs.size) parts.push(`remove the <b>${names}</b> subgrade task${g.subs.size===1?"":"s"}`);
+  return parts.join(", then "); }
+// Show the zeros on the cards as soon as ① / ② / the subgrade pills change (selected cards only); unpicking puts the old value back
+function gSync(){
+  const g=gPlan(), sel=new Set(S.rows.filter(r=>S.selected.has(r.item_id)).map(r=>r.item_id)), mine=S.gz||(S.gz=new Set());
+  const want=k=>(k==="overall"&&g.overall)||(k!=="overall"&&g.clear&&g.subs.has(k));
+  for(const key of [...mine]){ const [id,k]=key.split("|"); if(!sel.has(id)||!want(k)){ if(S.ge[id]&&S.ge[id][k]==="0") geSet(id,k,""); mine.delete(key); } }
+  for(const id of sel) for(const [k] of GKEYS) if(want(k)&&!mine.has(id+"|"+k)){ geSet(id,k,"0"); S.geOpen[id]=true; mine.add(id+"|"+k); }
+}
+async function gApply(){
+  const g=gPlan(), ids=S.rows.filter(r=>S.selected.has(r.item_id)).map(r=>r.item_id);
+  if(!ids.length){ $("#barmsg").innerHTML=`<span class="warn-txt">Select the cards first.</span>`; return; }
+  const zeros=[...(g.overall?["overall"]:[]),...(g.clear?[...g.subs]:[])];
+  gSync();
+  const taskNote=g.task&&g.subs.size?` <span class="warn-txt">Remove subgrades task isn't connected to admin yet, so it was skipped.</span>`:"";
+  render();
+  if(!zeros.length){ $("#barmsg").innerHTML=taskNote||""; return; }
+  if(!geCount()){ $("#barmsg").innerHTML=`<span class="warn-txt">Those grades are already 0.</span>${taskNote}`; return; }
+  await saveOverall();
+  if(taskNote) $("#barmsg").innerHTML+=taskNote;
 }
 function restorePanel(locked,key){
   const busy=key==="archive"?"archived":"pending_rescan", cur=(S.rs||{})[key]||"";
@@ -1231,7 +1296,7 @@ function gradeEditor(r){
   </div>`;
 }
 function geCount(){ return S&&S.ge?Object.values(S.ge).filter(o=>Object.keys(o).length).length:0; }
-function ovButton(){ const b=$("#ovBtn"); if(!b) return; const n=geCount(); b.hidden=!(S&&S.kind==="arena"&&n); const aw=$("#apprWrap"); if(aw) aw.hidden=true; b.textContent=`Save & approve (${n} card${n===1?"":"s"})`; }
+function ovButton(){ const b=$("#ovBtn"); if(!b) return; const n=geCount(); b.hidden=!(S&&S.kind==="arena"&&n)||(S.gp&&gActive()); const aw=$("#apprWrap"); if(aw) aw.hidden=true; b.textContent=`Save & approve (${n} card${n===1?"":"s"})`; }
 function geSet(id,k,raw){
   const r=S.matched.find(x=>x.item_id===id); if(!r) return;
   const v=String(raw).trim(), cur=gNow(r,k); S.ge[id]=S.ge[id]||{};
@@ -1252,6 +1317,30 @@ document.addEventListener("click",e=>{
   else if(t.dataset.gereset){ delete S.ge[t.dataset.gereset]; render(); }
   else if(t.dataset.geexp){ const i=document.querySelector(`input[data-gid="${t.dataset.geexp}"][data-gk="overall"]`); if(i){ i.value=t.dataset.v; geSet(t.dataset.geexp,"overall",t.dataset.v); } }
 });
+async function cornersNone(){
+  const sel=S.rows.filter(r=>S.selected.has(r.item_id)), dry=$("#dry").checked;
+  if(!sel.length){ $("#barmsg").innerHTML=`<span class="warn-txt">Select the cards first.</span>`; return; }
+  const ok=await ask({title:`Set every corner annotation to none on ${sel.length} card${sel.length===1?"":"s"}?`,
+    body:`${dry?"<b>Dry run:</b> reads each card's corners from admin and lists what would change. Nothing is written.<br><br>":""}For each corner that still has wear or damage marked, TAG-BOT makes a <b>review override</b> with every annotation set to <b>none</b> and approves it, the same as editing the corner on the grading page and clicking Approve. Corners already at none are skipped.
+      <br><br>Admin then recalculates the <b>Corners</b> subgrade, and the label and slab are rebuilt. The <b>overall</b> isn't changed: cards whose subgrades moved show <b>RECHECK</b> so you can fix the overall with Save & approve.
+      <div class="dim small" style="margin-top:8px">Credited to your grader profile, with no accuracy score. You can undo from Recent runs (it overrides each corner back).</div>`,
+    yes:dry?"Run dry run":"Yes, set corners to none"});
+  if(!ok) return;
+  const b=$("#cornersBtn"); if(b){ b.disabled=true; b.textContent="Working…"; }
+  $("#barmsg").innerHTML=`<span class="spin"></span>${dry?"Reading corners":"Overriding corners"}… ${sel.length} card${sel.length===1?"":"s"}`;
+  let r; try{ r=await api("corners",{text:S.text,item_ids:sel.map(x=>x.item_id),dry_run:dry}); }
+  catch(e){ if(b) b.disabled=false; render(); $("#barmsg").innerHTML=`<span class="warn-txt">${esc(e.message)}</span>`; return; }
+  let moved=0;
+  for(const c of r.cards||[]){ const row=S.matched.find(x=>x.item_id===c.item_id); if(!row||r.dry_run||!c.changed.length) continue;
+    if(c.corners_after!=null&&Number(row.corners)!==c.corners_after){ row.corners=c.corners_after; row.liveChanged=true; moved++; }
+    recheck(row); }
+  recompute(false);
+  const lines=(r.cards||[]).filter(c=>c.changed.length||c.error).slice(0,6).map(c=>{ const row=S.matched.find(x=>x.item_id===c.item_id)||{};
+    return `<span class="dim">AC ${esc(row.ac||"")}</span> ${c.changed.length} corner${c.changed.length===1?"":"s"}${c.corners_before!=null&&c.corners_after!=null&&!r.dry_run?` · Corners ${c.corners_before} → <b>${c.corners_after}</b>`:""}${c.error?` <span class="warn-txt">${esc(c.error.slice(0,120))}</span>`:""}`; });
+  const none=(r.cards||[]).filter(c=>!c.changed.length&&!c.error).length;
+  $("#barmsg").innerHTML=r.dry_run?`<b>Dry run:</b> ${r.would_write||0} card${r.would_write===1?"":"s"} would have corners overridden${none?` · ${none} already none`:""}. ${lines.join(" · ")}`
+    :`<b class="done-badge" style="font-size:14px">✓ Corners → none on ${r.succeeded} card${r.succeeded===1?"":"s"}</b>${r.failed?` <span class="warn-txt">${r.failed} failed</span>`:""}${none?` · ${none} already none`:""}${moved?` · <b>${moved}</b> Corners subgrade changed: check RECHECK cards' overall`:""}<br>${lines.join(" · ")} <span class="dim">· undo from Recent runs</span>`;
+}
 // Set all four subgrades and the overall to 0 (only the ones not already 0 count as changes)
 function geZero(ids){ for(const id of ids){ S.geOpen[id]=true; for(const [k] of GKEYS) geSet(id,k,"0"); } }
 async function saveOverall(){
@@ -1280,7 +1369,8 @@ async function saveOverall(){
     else{
       (r.written_ids||[]).forEach(id=>{ const c=S.matched.find(x=>x.item_id===id), g=items.find(x=>x.item_id===id).grades;
         if(c){ snapCheck(c); for(const [k,v] of Object.entries(g)){ if(k==="overall"){ c.grade_num=v; c.check_overall=v; c.grade=(c.grading_company||"arena_club")+" "+v; } else c[k]=v; }
-          recheck(c); }
+          if(Number(c.grade_num)===0){ c.authentic=true; c.overall_check="pass"; c.grade=(c.grading_company||"arena_club")+" authentic"; } // all 0 = authentic, same as a live read
+          else { c.authentic=false; recheck(c); } }
         S.geSaved[id]=true; delete S.ge[id]; });
       recompute(false); // re-sort by the new grades
       const nf=(r.rebuild_failed||[]).length;
@@ -1364,7 +1454,8 @@ function backToAll(){
 // Overall check after grades change: Metabase's check was computed on the subgrades it saw.
 // Same subgrades -> compare overall with its expected; changed subgrades -> the expected is stale, so recheck.
 const SUBS=["centering","corners","edges","surface"];
-function snapCheck(c){ if(!c._ck) c._ck=Object.fromEntries(SUBS.map(k=>[k,c[k]==null?null:Number(c[k])])); }
+// snapshot = the subgrades Overall Check (15214) used; a card it didn't return has nothing to recheck against
+function snapCheck(c){ if(!c._ck&&c.check_subs) c._ck=Object.fromEntries(SUBS.map(k=>[k,c.check_subs[k]==null?null:Number(c.check_subs[k])])); }
 function recheck(c){
   if(c.authentic||!c._ck) return;
   const subChanged=SUBS.some(k=>(c[k]==null?null:Number(c[k]))!==c._ck[k]);
@@ -1443,7 +1534,7 @@ function recompute(resetSelection){
 function showEmpty(msg){S=null;$("#summary").innerHTML="";$("#grid").innerHTML="";$("#empty").hidden=false;$("#empty").textContent=msg;$("#bar").hidden=true}
 
 /* ---------- render ---------- */
-function render(){ renderInner(); clearWatchPhotos($("#grid")); ovButton(); const ba=$("#backAll"); if(ba) ba.onclick=backToAll; }
+function render(){ if(S&&S.kind==="arena"&&S.gp) gSync(); renderInner(); clearWatchPhotos($("#grid")); ovButton(); const ba=$("#backAll"); if(ba) ba.onclick=backToAll; }
 function renderInner(){
   if(!S){return}
   $("#empty").hidden=!!S.rows.length;
@@ -1481,7 +1572,7 @@ function renderInner(){
           <option value="evhigh"${S.sort==="evhigh"?" selected":""}>EV: high → low</option>
           <option value="evlow"${S.sort==="evlow"?" selected":""}>EV: low → high</option></select>
         ${S.kind==="arena"?`
-        <button type="button" class="btn" id="zeroBtn" title="Set centering, corners, edges, surface and overall to 0 on the selected cards, then save & approve to admin">0 all grades (${S.rows.filter(r=>S.selected.has(r.item_id)).length})</button>
+        <button type="button" class="btn" id="cornersBtn" title="Set every corner annotation to none on the selected cards: a corner override + approve per corner, like the grading page, then the label and slab are rebuilt">Corners → none (${S.rows.filter(r=>S.selected.has(r.item_id)).length})</button>
         <button type="button" class="btn only75${S.only75?" on":""}" id="only75" aria-pressed="${!!S.only75}">${S.only75?"✓ ":""}Only ≤ 7.5 / auth</button>
         <button type="button" class="btn" id="liveBtn" title="Re-read every card's grades, slab and tag straight from admin (Metabase updates on a delay)">↻ Refresh from admin</button>`:ARCHK(S.kind)||S.kind==="cards"||S.kind==="watches"?`
         <button type="button" class="btn" id="archLiveBtn" title="Re-read every card's status, authentication status, tag and photo straight from admin (Metabase updates on a delay)">↻ Refresh from admin</button>`:""}</div>
@@ -1840,6 +1931,14 @@ $("#info").addEventListener("close",()=>{WI=null});
 function renderBar(n,replacing){
   const bar=$("#bar"); bar.hidden=false;
   const cb=$("#confirmBtn"), msg=$("#barmsg");
+  if(S&&S.kind==="arena"&&gActive()&&S.phase==="review"){
+    // count only the cards that will actually change; ones already at 0 are skipped
+    const sel=S.rows.filter(r=>S.selected.has(r.item_id)), g=gPlan(), n=sel.filter(r=>S.ge[r.item_id]&&Object.keys(S.ge[r.item_id]).length).length;
+    const zeroOnly=!(g.task&&g.subs.size), same=sel.length-n;
+    cb.hidden=false; cb.disabled=zeroOnly&&!n; cb.className="btn big primary"; cb.textContent=`Apply to admin (${zeroOnly?n:sel.length})`;
+    msg.innerHTML=`On <b>${n}</b> card${n===1?"":"s"}: ${gSummary()}.${same&&zeroOnly?` <span class="dim">${same} already 0, skipped.</span>`:""}`;
+    return;
+  }
   if(S&&(ARCHK(S.kind)||S.kind==="arena"||S.kind==="cards")&&planList().length&&S.phase==="review"){
     const plan=planList(), rows=plan.map(a=>({a,v:SACTS[a.key],...saTargets(a)})), act=rows.filter(x=>x.hit.length);
     const needNote=rows.some(x=>x.a.op==="apply"&&TSK[x.a.key]&&x.hit.some(r=>!cardNote(r,x.a.key,(S.sn||{})[x.a.key])));
@@ -1880,16 +1979,19 @@ function bindSummary(){
   const lb=$("#liveBtn"); if(lb) lb.onclick=async()=>{ lb.disabled=true; lb.textContent="Refreshing…"; await refreshLive(); };
   const alb=$("#archLiveBtn"); if(alb) alb.onclick=async()=>{ alb.disabled=true; alb.textContent="Refreshing…"; await refreshArchived(); };
   const o75=$("#only75"); if(o75) o75.onclick=()=>{ S.only75=!S.only75; recompute(true); };
-  // one click: zero every grade on the selected cards, then the usual Save & approve confirm
-  const zb=$("#zeroBtn"); if(zb) zb.onclick=()=>{ const ids=S.rows.filter(r=>S.selected.has(r.item_id)).map(r=>r.item_id);
-    if(!ids.length){ $("#barmsg").innerHTML=`<span class="warn-txt">Select the cards to zero first.</span>`; return; }
-    geZero(ids); render();
-    if(!geCount()){ $("#barmsg").innerHTML=`<span class="warn-txt">Those cards' grades are already 0.</span>`; return; }
-    saveOverall(); };
+  // Corners → none: override + approve each corner with every annotation at none (admin recalculates Corners)
+  const cnb=$("#cornersBtn"); if(cnb) cnb.onclick=()=>cornersNone();
   document.querySelectorAll(".sabtn").forEach(b=>b.onclick=()=>{ const k=b.dataset.sk, op=b.dataset.sop; S.plan=S.plan||{};
     if(S.plan[k]===op) delete S.plan[k]; else S.plan[k]=op;            // click again to unpick; Apply ↔ Remove swaps
     S.sact=planList()[0]||null; render();
     if(S.plan[k]){ const mine=S; liveDates(S.rows.filter(r=>S.selected.has(r.item_id))).then(()=>{ if(S===mine&&planList().length){ recompute(false); render(); } }).catch(()=>{}); } });
+  document.querySelectorAll(".gp").forEach(b=>b.onclick=()=>{ const g=gPlan();
+    if(b.dataset.g==="overall") g.overall=!g.overall;
+    else if(b.dataset.g==="clear"){ g.clear=!g.clear; if(g.clear) G_SUBS.forEach(([k])=>g.subs.add(k)); else if(!g.task) g.subs.clear(); } // ② clears all four; unlight one to keep it
+    else if(b.dataset.g==="task"){ if(!DEMO&&!g.task){ $("#barmsg").innerHTML=`<span class="warn-txt">Remove subgrades task needs an admin capture before it can write. Clear overall and Clear subgrades work now.</span>`; return; }
+      g.task=!g.task; if(!g.clear&&!g.task) g.subs.clear(); }
+    else if(b.dataset.gs){ const k=b.dataset.gs; g.subs.has(k)?g.subs.delete(k):g.subs.add(k); }
+    render(); });
   document.querySelectorAll(".saRestore").forEach(x=>x.onchange=()=>{ (S.rs=S.rs||{})[x.dataset.key]=x.value; });
   const sc=$("#saCancel"); if(sc) sc.onclick=()=>{ S.plan={}; S.sact=null; render(); };
   document.querySelectorAll(".npill").forEach(b=>b.onclick=()=>{ const key=b.dataset.key, id=b.dataset.nid, g=b.dataset.ng, v=b.dataset.nv, sel=S.rows.filter(r=>S.selected.has(r.item_id));
@@ -1937,6 +2039,7 @@ const tagCounts=rows=>{const m=new Map();rows.forEach(r=>{const k=r.tag||"(no ta
 
 $("#confirmBtn").onclick=async()=>{
   // a status change (Archive, Not accepted, rescan) never touches tags; Cards tile included
+  if(S&&S.kind==="arena"&&gActive()) return gApply();
   if(S&&(ARCHK(S.kind)||S.kind==="arena"||S.kind==="cards")&&planList().length) return statusRun($("#dry").checked);
   const sel=S.rows.filter(r=>S.selected.has(r.item_id));
   const dry=$("#dry").checked;
@@ -2292,11 +2395,12 @@ function setKind(k){
   document.querySelector("#source .dim").textContent=x?(k==="pl"?"Precision Labeling:":"Archived:"):a?"Arena Club:":w?"Watches:":"Cards:";
   $("#archViews").hidden=k!=="pl"; $("#archViews2").hidden=k!=="archived";
   if(x){ VIEW=VIEWBY[k]; document.querySelectorAll("#archViews button,#archViews2 button").forEach(b=>b.setAttribute("aria-checked",b.dataset.view===VIEW)); }
-  document.querySelector("#source b").textContent=x?`${VIEWS[VIEW]} · ${DEMO?"Demo":"Live"} · Metabase ${VIEWQ[VIEW]}, fresh every search`:a?"Live · Metabase 45739, fresh every search":w?"Live · Metabase 45046, fresh every search":"Live · Metabase 4131, fresh every search";
+  document.querySelector("#source b").textContent=x?`${VIEWS[VIEW]} · ${DEMO?"Demo":"Live"} · Metabase ${VIEWQ[VIEW]}, fresh every search`:a?`${DEMO?"Demo":"Live"} · Metabase 45739 + Overall Check 15214`:w?"Live · Metabase 45046, fresh every search":"Live · Metabase 4131, fresh every search";
   document.querySelector('#form button[type=submit]').textContent=w?"Find watches":"Find cards";
   document.body.classList.toggle("kind-arena",a);
   $("#input").placeholder=x?"Type or use voice: "+VIEWPH[VIEW]:a?"Type or use voice: orders 16543222, 16277829 as sp_hold":w?"Type or use voice: tag rolex datejust black dial as dj_black_dial":"Type or use voice: tag wemby psa 10 over $200 as sd_wemby_grail";
   try{localStorage.setItem("tb_kind",k)}catch{}
+  if(a&&DEMO&&!S){ $("#input").value="23117068, 23117070"; const f=$("#form"); if(f&&f.requestSubmit) f.requestSubmit(); }
 }
 document.querySelectorAll(".kind").forEach(b=>b.onclick=()=>setKind(b.dataset.kind));
 setView(VIEW);

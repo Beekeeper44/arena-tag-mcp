@@ -3,7 +3,7 @@ import { config } from "@/lib/config";
 import { searchArchived } from "@/lib/archived";
 import { runArchivedStatus, undoArchivedStatus } from "@/lib/archived-status";
 import { type CardFilters, type PostFilters } from "@/lib/metabase";
-import { runSelection, runWatchSelection, runArenaSelection, runArchivedSelection, runOverallUpdate, runGradeUpdate, undoRun, listRuns } from "@/lib/runs";
+import { runSelection, runWatchSelection, runArenaSelection, runArchivedSelection, runOverallUpdate, runGradeUpdate, runCornersNone, undoRun, listRuns } from "@/lib/runs";
 import { searchArena } from "@/lib/arena";
 import { openAdminSession, liveCards, liveWatches } from "@/lib/admin";
 import { listPrompts, addPrompt, renamePrompt, deletePrompt } from "@/lib/ui";
@@ -189,6 +189,9 @@ export async function POST(req: Request, ctx: Ctx) {
           text: str("text"), items: Array.isArray(body.items) ? (body.items as { item_id: string; grades: Record<string, number> }[]) : [],
           dry_run: body.dry_run === true, approve: body.approve === true, user: u.name, as_admin_user_id: adminLoginFor(u),
         }));
+      case "corners":
+        // Arena Club: every corner annotation → none (override + approve per corner, then label/slab rebuild)
+        return json(await runCornersNone({ text: str("text"), item_ids: Array.isArray(body.item_ids) ? (body.item_ids as string[]) : [], dry_run: body.dry_run === true, user: u.name, as_admin_user_id: adminLoginFor(u) }));
       case "live": {
         // current grades straight from admin for the cards on screen (Metabase lags behind)
         const ids = (Array.isArray(body.ids) ? (body.ids as string[]) : []).slice(0, 2000);
