@@ -334,6 +334,8 @@ h1 span{color:var(--go)}
 @media (prefers-reduced-motion: reduce){.pstep.run .pbar{animation:none}}
 .pstep.wait{opacity:.55}
 .pstep .pnum{white-space:nowrap;font-variant-numeric:tabular-nums}
+.pfails{font-size:12px;display:grid;gap:4px;margin-top:2px;max-height:110px;overflow:auto}
+.pfails .pf{display:inline-block;margin:0 10px 0 6px}
 .pdet{font-size:12px;max-height:120px;overflow:auto}
 .pdet summary{cursor:pointer;color:var(--dim)}
 .planline{margin:0 0 10px;padding:8px 10px;border:1px solid var(--line);border-radius:8px}
@@ -683,7 +685,7 @@ a.btn.clickme{border-color:currentColor!important;text-decoration:none}
     <nav class="tabs" role="tablist" aria-label="Sections">
       <button role="tab" id="tabBtn-request" aria-selected="true" aria-controls="tab-request" type="button">Request</button>
       <button role="tab" id="tabBtn-saved" aria-selected="false" aria-controls="tab-saved" type="button">Saved prompts <span class="count-badge" id="savedCount" hidden></span></button>
-      <button role="tab" id="tabBtn-users" aria-selected="false" aria-controls="tab-users" type="button" hidden>Users</button>
+      <button role="tab" id="tabBtn-users" aria-selected="false" aria-controls="tab-users" type="button">Users</button>
     </nav>
   </div>
 
@@ -1218,6 +1220,9 @@ async function gTagStep(ids,dry){
     return {ok:w.length,fail:t.failed||0,html:`${isDry?"Dry run: would tag":"✓ Tagged"} <b>${w.length}</b> card${w.length===1?"":"s"} ${tagPills(S.tag)}${t.failed?` <span class="obad">${t.failed} failed</span>`:""} <span class="dim">· run ${esc(t.run_id||"")}</span>`};
   }catch(e){ return {ok:0,fail:ids.length,html:`<span class="obad">Tags not applied: ${esc(e.message)}</span>`}; }
 }
+// "Select just these" under failed cards: select only the cards that failed, ready to Apply again
+document.addEventListener("click",e=>{ const b=e.target.closest("[data-selfails]"); if(!b||!S) return;
+  S.selected=new Set(b.dataset.selfails.split(",").filter(Boolean)); render(); });
 async function gApply(){
   const g=gPlan(), sel=S.rows.filter(r=>S.selected.has(r.item_id)), dry=$("#dry").checked;
   if(!sel.length){ $("#barmsg").innerHTML=`<span class="warn-txt">Select the cards first.</span>`; return; }
@@ -1235,41 +1240,63 @@ async function gApply(){
       <div class="dim small">Runs in this order. Each step can be undone from Recent runs.</div>`,
     yes:dry?"Run dry run":"Yes, apply"});
   if(!ok) return;
-  // one progress bar per step (green = done, red = failed); the per-card detail folds away under "Details"
-  const steps=[], details=[], N=sel.length, zN=Object.values(S.ge).filter(o=>Object.keys(o).length).length;
+  // one progress bar per step, sent in small batches so big runs (50+) don't time out:
+  // the bar fills batch by batch, failures get one automatic retry, and cards that still fail are listed with the reason
+  const BATCH=6, chunk=(a,n)=>{ const o=[]; for(let i=0;i<a.length;i+=n) o.push(a.slice(i,i+n)); return o; };
+  const ids=sel.map(r=>r.item_id), steps=[], details=[], N=ids.length;
   if(corners) steps.push({k:"c",label:"① Remove subgrades task",n:N});
   const g0=gPlan(), subKeys=g0.clear?[...g0.subs]:[], doSubs=subKeys.length>0, doOver=!!g0.overall;
   if(doSubs) steps.push({k:"zs",label:"② Subgrades → 0",n:N});
   if(doOver) steps.push({k:"zo",label:"③ Overall → 0",n:N});
   if(gTagsOn()) steps.push({k:"t",label:"Tags",n:N});
-  steps.forEach(st=>st.title={c:`${gParts().join(", ")} → none, under your name`,zs:"saved, label & slab rebuilt, approved",zo:"saved, label & slab rebuilt, approved",t:"added alongside each card's other tags"}[st.k]||"");
-  const pct=(x,n)=>n?Math.round(100*x/n):0;
-  const draw=()=>{ $("#barmsg").innerHTML=`<div class="prog" role="status" aria-live="polite">${steps.map(st=>`<div class="pstep ${st.state||"wait"}"><span class="plabel" title="${esc(st.title||"")}">${esc(st.label)}</span>
-      <div class="pbar" aria-hidden="true"><i style="width:${st.state==="done"?pct(st.ok,st.n):0}%"></i><b style="width:${st.state==="done"?pct(st.fail,st.n):0}%"></b></div>
-      <span class="pnum">${st.state==="run"?"working…":st.state==="done"?`${st.ok}/${st.n}${st.fail?` · <span class="obad">${st.fail} failed</span>`:""}`:"waiting"}</span></div>`).join("")}
+  steps.forEach(st=>{ st.ok=0; st.fails=[]; st.title={c:`${gParts().join(", ")} → none, under your name`,zs:"saved, label & slab rebuilt, approved",zo:"saved, label & slab rebuilt, approved",t:"added alongside each card's other tags"}[st.k]||""; });
+  const pct=(x,n)=>n?Math.round(100*x/n):0, acOf=id=>{ const c=S.matched.find(x=>x.item_id===id)||{}; return c.ac?`AC ${c.ac}`:id.slice(0,8); };
+  const draw=()=>{ const failed=steps.filter(st=>st.fails.length);
+    $("#barmsg").innerHTML=`<div class="prog" role="status" aria-live="polite">${steps.map(st=>`<div class="pstep ${st.state||"wait"}"><span class="plabel" title="${esc(st.title||"")}">${esc(st.label)}</span>
+      <div class="pbar" aria-hidden="true"><i style="width:${pct(st.ok,st.n)}%"></i><b style="width:${pct(st.fails.length,st.n)}%"></b></div>
+      <span class="pnum">${st.state==="wait"||!st.state?"waiting":`${st.ok}/${st.n}${st.fails.length?` · <span class="obad">${st.fails.length} failed</span>`:""}${st.state==="run"?(st.retrying?" · retrying…":" …"):""}`}</span></div>`).join("")}
+      ${failed.length?`<div class="pfails">${failed.map(st=>`<div><b class="obad">✗ ${esc(st.label)}</b> ${st.fails.map(f=>`<span class="pf"><b>${esc(acOf(f.id))}</b>${f.error?` <span class="dim">${esc(String(f.error).slice(0,90))}</span>`:""}</span>`).join("")}</div>`).join("")}<div class="small"><button type="button" class="btn link" data-selfails="${esc([...new Set(failed.flatMap(st=>st.fails.map(f=>f.id)))].join(","))}">Select just these</button> <span class="dim">then Apply again to retry them.</span></div></div>`:""}
       ${details.length?`<details class="pdet"><summary>Details · undo from Recent runs</summary>${details.join("<br>")}</details>`:""}</div>`; };
-  const run=async(k,fn)=>{ const st=steps.find(x=>x.k===k); st.state="run"; draw(); await fn(st); st.state="done"; draw(); };
+  // run one step over all cards in batches; fn(batchIds) → {ok:[ids], fail:[{id,error}]}; failures retried once
+  const run=async(k,fn)=>{ const st=steps.find(x=>x.k===k); st.state="run"; draw();
+    for(const part of chunk(ids,BATCH)){ const r=await fn(part); st.ok+=r.ok.length; st.fails.push(...r.fail); draw(); }
+    if(st.fails.length&&!dry){ const again=st.fails.map(f=>f.id); st.fails=[]; st.retrying=true; draw();
+      for(const part of chunk(again,BATCH)){ const r=await fn(part); st.ok+=r.ok.length; st.fails.push(...r.fail); draw(); } st.retrying=false; }
+    st.state="done"; draw(); };
+  const failAll=(part,e)=>({ok:[],fail:part.map(id=>({id,error:e.message||String(e)}))});
   draw();
-  if(corners) await run("c",async st=>{ const r=await cornersNone({noAsk:true,skipImages:zeros&&!dry,parts:gParts()});
-    st.ok=r&&r.dry_run?(r.would_write||0):(r&&r.succeeded)||0; st.fail=(r&&r.failed)||0; details.push($("#barmsg").innerHTML); gSync(); render(); });
+  if(corners) await run("c",async part=>{ try{
+      const r=await api("corners",{text:S.text,item_ids:part,dry_run:dry,skip_images:zeros&&!dry,parts:gParts()});
+      // "corners saved; label/slab rebuild failed" = the overrides are in; only the picture rebuild needs a retry → warning, not a failure
+      const cards=r.cards||[], bad=cards.filter(c=>c.error&&!String(c.error).startsWith("corners saved")), warn=cards.filter(c=>c.error&&String(c.error).startsWith("corners saved"));
+      warn.forEach(c=>details.push(`<span class="warn-txt">① ${esc(acOf(c.item_id))}: overrides saved, label rebuild didn't finish (${esc(String(c.error).replace(/^corners saved; label\/slab rebuild failed: /,""))})</span>`));
+      for(const c of cards){ const row=S.matched.find(x=>x.item_id===c.item_id); if(row&&!r.dry_run&&c.corners_after!=null) row.corners=c.corners_after; }
+      details.push(`① ${part.length} card${part.length===1?"":"s"}: ${cards.length-bad.length} done <span class="dim">· run ${esc(r.run_id||"")}</span>`);
+      return {ok:cards.filter(c=>!c.error).map(c=>c.item_id),fail:[...bad.map(c=>({id:c.item_id,error:c.error})),...part.filter(id=>!cards.some(c=>c.item_id===id)).map(id=>({id,error:"not returned by the server"}))]};
+    }catch(e){ return failAll(part,e); } });
   // each grade step is its own full save: grades written, label + slab rebuilt, review approved (even if the card already shows 0)
-  const gradeStep=async(st,keys,label)=>{
-    const items=sel.map(r=>({item_id:r.item_id,grades:Object.fromEntries(keys.map(k=>[k,0]))}));
-    try{
-      const r=await api("grades",{text:S.text,items,dry_run:dry,approve:true,force:true});
-      if(r.dry_run){ st.ok=r.would_write||0; st.fail=0; details.push(`Dry run · ${label}: would save on ${st.ok}`); return; }
-      (r.written_ids||[]).forEach(id=>{ const c=S.matched.find(x=>x.item_id===id); if(!c) return; snapCheck(c);
+  const gradeStep=(keys,label)=>async part=>{ try{
+      const r=await api("grades",{text:S.text,items:part.map(id=>({item_id:id,grades:Object.fromEntries(keys.map(k=>[k,0]))})),dry_run:dry,approve:true,force:true});
+      if(r.dry_run) return {ok:part,fail:[]};
+      const w=new Set(r.written_ids||[]);
+      w.forEach(id=>{ const c=S.matched.find(x=>x.item_id===id); if(!c) return; snapCheck(c);
         for(const k of keys){ if(k==="overall"){ c.grade_num=0; c.check_overall=0; } else c[k]=0; }
         if(Number(c.grade_num)===0){ c.authentic=true; c.overall_check="pass"; c.grade=(c.grading_company||"arena_club")+" authentic"; }
         if(S.ge[id]) keys.forEach(k=>delete S.ge[id][k]); });
-      st.ok=(r.written_ids||[]).length; st.fail=(r.failed||0)+(r.mismatch||0);
-      details.push(`✓ ${label}: saved, label & slab rebuilt, approved on ${st.ok}${st.fail?` · <span class="obad">${st.fail} failed</span>`:""} <span class="dim">· run ${esc(r.run_id||"")}</span>`);
-    }catch(e){ st.ok=0; st.fail=st.n; details.push(`<span class="obad">${label}: ${esc(e.message)}</span>`); }
-  };
-  if(doSubs) await run("zs",st=>gradeStep(st,subKeys,"Subgrades → 0"));
-  if(doOver) await run("zo",st=>gradeStep(st,["overall"],"Overall → 0"));
+      const why=Object.fromEntries((r.failures||[]).map(f=>[f.item_id,f.error||`HTTP ${f.status}`]));
+      details.push(`${label} · ${part.length}: ${w.size} saved, label & slab rebuilt, approved <span class="dim">· run ${esc(r.run_id||"")}</span>`);
+      return {ok:[...w],fail:part.filter(id=>!w.has(id)).map(id=>({id,error:why[id]||"admin didn't confirm the save"}))};
+    }catch(e){ return failAll(part,e); } };
+  if(doSubs) await run("zs",gradeStep(subKeys,"② Subgrades → 0"));
+  if(doOver) await run("zo",gradeStep(["overall"],"③ Overall → 0"));
   if(doSubs||doOver){ S.gz=new Set(); recompute(false); }
-  if(gTagsOn()) await run("t",async st=>{ const r=await gTagStep(sel.map(x=>x.item_id),dry); st.ok=r.ok; st.fail=r.fail; details.push(r.html); });
+  if(gTagsOn()) await run("t",async part=>{ try{
+      const t=await api("apply",{kind:S.kind,view:S.view,text:S.text,filters:S.filters,queries:S.queries,post_filters:S.post,action:"set",tag:S.tag,mode:"overwrite",item_ids:part,dry_run:dry});
+      if(t.status==="dry_run_completed") return {ok:part,fail:[]};
+      const w=new Set(t.written_ids||[]); w.forEach(id=>{ const c=S.matched.find(x=>x.item_id===id); if(c) c.tag=addTags(c.tag,S.tag); });
+      details.push(`Tags · ${part.length}: ${w.size} tagged <span class="dim">· run ${esc(t.run_id||"")}</span>`);
+      return {ok:[...w],fail:part.filter(id=>!w.has(id)).map(id=>({id,error:"admin didn't confirm the tag"}))};
+    }catch(e){ return failAll(part,e); } });
   draw();
   if(S.kind==="arena"&&!dry){ try{ await liveDates(sel); render(); draw(); }catch{} } // tiles show what admin has now
 }
@@ -2549,7 +2576,8 @@ async function loadUsers(){
 /* ---------- start-up ---------- */
 async function boot(){
   let me;
-  try{ me=await api("me"); }catch{ return; }
+  try{ me=await api("me"); }
+  catch(e){ const w=$("#whoami"); if(w) w.innerHTML=`<span class="warn-txt">Couldn't read your account: ${esc(e.message)}</span>`; return; } // say why instead of hiding Users
   ME=me; hideLoginForm();
   $("#whoami").innerHTML=`Signed in as <b>${esc(me.user)}</b><span class="rolebadge">${esc(me.role)}</span>`;
   $("#tabBtn-users").hidden=false; // members see the list; only admins can change it

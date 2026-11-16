@@ -756,9 +756,8 @@ export async function runCornersNone(input: { text: string; item_ids: string[]; 
   // corners: every annotation at severity none; edges: no annotations (an edge's "none" is an empty list)
   const toNone = (_: string, cur: CornerLabel[], part: Part) => part !== "corner" ? [] : // edges / surfaces: no annotations
     (cur.length ? cur : [{ kind: "wear", side: "front", severity: "" }, { kind: "wear", side: "back", severity: "" }]).map((l) => ({ kind: l.kind, side: l.side, severity: "none" }));
-  const res = await applyCorners(id, chosen.map((c) => ({ item_id: c.item_id, want: toNone })), "written", input.as_admin_user_id, input.user, dry, true, parts);
-  // no label/slab rebuild here: overriding annotations doesn't change any grade, so the label stays the same
-  // (a grade save that follows rebuilds it with the new numbers)
+  // label + slab rebuilt after the overrides, like admin's Review Override; skipped only when a grade save follows (it rebuilds anyway)
+  const res = await applyCorners(id, chosen.map((c) => ({ item_id: c.item_id, want: toNone })), "written", input.as_admin_user_id, input.user, dry, input.skip_images === true, parts);
   const status = dry ? "dry_run_completed" : res.failed ? (res.succeeded ? "partial" : "failed") : "completed";
   await q(`UPDATE tag_runs SET status=$2, finished_at=now(), result=$3 WHERE id=$1`, [id, status, JSON.stringify({ ...res, cards: undefined })]);
   return { run_id: id, status, dry_run: dry, ...res };

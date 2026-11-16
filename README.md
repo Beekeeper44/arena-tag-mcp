@@ -208,4 +208,4 @@ Name a field and its value, in any order and combination: `dial black`, `bracele
 
 ### Users (TAG-BOT accounts)
 
-Everyone signed in sees the **Users** tab (who has access, role, on/off). Only **admins** can add people, change member/admin, send invite links, link admin logins and switch people on/off. `ADMIN_EMAILS` in Vercel (comma-separated) makes those accounts admins whatever their saved role, so an admin can always get back in.
+Everyone signed in sees the **Users** tab (who has access, role, on/off). Only **admins** can add people, change member/admin, send invite links, link admin logins and switch people on/off. alan@arenaclub.com and austin.crawford@arenaclub.com are always admins; `ADMIN_EMAILS` in Vercel (comma-separated) adds more. Those accounts are admins whatever their saved role, so an admin can always get back in.
