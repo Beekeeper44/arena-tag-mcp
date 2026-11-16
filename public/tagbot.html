@@ -2540,9 +2540,13 @@ function pwPanel(show){ const el=$("#pwPanel"); if(!el) return;
   else el.innerHTML=""; }
 pwPanel(false);
 async function loadUsers(){
+  // ask the server who's signed in right now (don't trust a stale or missing start-up read)
+  try{ const me=await api("me"); ME=me; $("#whoami").innerHTML=`Signed in as <b>${esc(me.user)}</b><span class="rolebadge">${esc(me.role)}</span>`; }catch{}
   let users; try{ users=await api("users"); }catch(e){ $("#usersTbl").textContent=e.message; return; }
+  // the list itself says who's an admin: if your own row is admin, you're an admin
+  if(ME&&!ME.is_admin){ const mine=users.find(u=>u.id===ME.id||String(u.email).toLowerCase()===String(ME.email||"").toLowerCase()); if(mine&&mine.role==="admin") ME.is_admin=true; }
   if(!ME||!ME.is_admin){ // members: read-only list
-    $("#usersTbl").innerHTML=`<div class="warn" style="margin-bottom:10px">You're a <b>member</b>: you can see who has access, but only a TAG-BOT <b>admin</b> can add people, change roles or switch them on/off.</div>
+    $("#usersTbl").innerHTML=`<div class="warn" style="margin-bottom:10px">${ME?`Signed in as <b>${esc(ME.email||ME.user)}</b>. `:"Couldn't read your account. "}You're a <b>member</b>: you can see who has access, but only a TAG-BOT <b>admin</b> can add people, change roles or switch them on/off.</div>
       <table><tr><th>person</th><th>role</th><th>status</th><th>last sign-in</th></tr>${users.map(u=>`<tr><td><b>${esc(u.name)}</b><br><span class="dim">${esc(u.email)}</span></td><td>${esc(u.role)}</td><td>${u.active?"on":`<span class="dim">off</span>`}</td><td class="dim">${u.last_login_at?when(u.last_login_at):"—"}</td></tr>`).join("")}</table>`;
     document.querySelectorAll("#tab-users .nubox").forEach(e=>e.hidden=true); return; }
   document.querySelectorAll("#tab-users .nubox").forEach(e=>e.hidden=false);
