@@ -1200,7 +1200,7 @@ function gSync(){
   const g=gPlan(), sel=new Set(S.rows.filter(r=>S.selected.has(r.item_id)).map(r=>r.item_id)), mine=S.gz||(S.gz=new Set());
   const want=k=>(k==="overall"&&g.overall)||(k!=="overall"&&g.clear&&g.subs.has(k));
   for(const key of [...mine]){ const [id,k]=key.split("|"); if(!sel.has(id)||!want(k)){ if(S.ge[id]&&S.ge[id][k]==="0") geSet(id,k,""); mine.delete(key); } }
-  for(const id of sel) for(const [k] of GKEYS) if(want(k)&&!mine.has(id+"|"+k)){ geSet(id,k,"0"); S.geOpen[id]=true; mine.add(id+"|"+k); }
+  for(const id of sel) for(const [k] of GKEYS) if(want(k)&&!mine.has(id+"|"+k)){ geSet(id,k,"0"); (S.ge[id]||(S.ge[id]={}))[k]="0"; S.geOpen[id]=true; mine.add(id+"|"+k); } // already 0 still goes through the full save
 }
 const gTagsOn=()=>S.action==="set"&&!!S.tag&&TAGS_OK(S.tag);
 async function gTagStep(ids,dry){
@@ -1243,7 +1243,7 @@ async function gApply(){
   draw();
   if(corners) await run("c",async st=>{ const r=await cornersNone({noAsk:true,skipImages:zeros&&!dry,parts:gParts()});
     st.ok=r&&r.dry_run?(r.would_write||0):(r&&r.succeeded)||0; st.fail=(r&&r.failed)||0; details.push($("#barmsg").innerHTML); gSync(); render(); });
-  if(zeros&&geCount()>0) await run("z",async st=>{ const r=await saveOverall({noAsk:true});
+  if(zeros&&geCount()>0) await run("z",async st=>{ const r=await saveOverall({noAsk:true,force:true});
     st.ok=r&&r.dry_run?(r.would_write||0):(r&&r.succeeded)||0; st.fail=r&&r.error?st.n:((r&&r.failed)||0)+((r&&r.mismatch)||0); details.push($("#barmsg").innerHTML); });
   if(gTagsOn()) await run("t",async st=>{ const r=await gTagStep(sel.map(x=>x.item_id),dry); st.ok=r.ok; st.fail=r.fail; details.push(r.html); });
   draw();
@@ -1488,7 +1488,7 @@ async function saveOverall(opts={}){
   const alsoTag=canTag&&!!($("#askTag")&&$("#askTag").checked);
   const b=$("#ovBtn"); b.disabled=true; b.textContent="Saving…";
   try{
-    const r=await api("grades",{text:S.text,items,dry_run:dry,approve});
+    const r=await api("grades",{text:S.text,items,dry_run:dry,approve,force:!!opts.force});
     if(r.dry_run){ $("#barmsg").innerHTML=`Dry run — grades would change on <b>${r.would_write}</b> card${r.would_write===1?"":"s"}. Nothing was written.`; }
     else{
       (r.written_ids||[]).forEach(id=>{ const c=S.matched.find(x=>x.item_id===id), g=items.find(x=>x.item_id===id).grades;
@@ -1694,7 +1694,7 @@ function renderInner(){
   const sel=S.rows.filter(r=>S.selected.has(r.item_id));
   const ev=sel.reduce((s,r)=>s+r.ev,0);
   const replacing=S.action==="set"?sel.filter(r=>r.tag&&r.tag!==S.tag).length:0;
-  const lab={any:"PO / order #",brand:"brand",model:"model",reference:"ref",dial_color:"dial",year:"year",condition:"condition",material:"material",serial:"serial",set_number:"card #",contains:"also matches",ac_number:"AC #",cert_number:"cert",player_name:"player",set_name:"set",parallel_name:"parallel",grading_company:"grader",grade:"grade",min_estimated_value:"min",max_estimated_value:"max",sport:"sport",tag:"current tag"};
+  const lab={dial:"dial",movement:"movement",case:"case",size:"size",bracelet:"bracelet",gender:"gender",box:"box",papers:"papers",any:"PO / order #",brand:"brand",model:"model",reference:"ref",dial_color:"dial",year:"year",condition:"condition",material:"material",serial:"serial",set_number:"card #",contains:"also matches",ac_number:"AC #",cert_number:"cert",player_name:"player",set_name:"set",parallel_name:"parallel",grading_company:"grader",grade:"grade",min_estimated_value:"min",max_estimated_value:"max",sport:"sport",tag:"current tag"};
   const chips=Object.entries(S.filters).map(([k,v])=>`<span class="chip"><i>${Array.isArray(v)?`${lab[k]||k}s (${v.length})`:(lab[k]||k)}</i> ${esc(k.includes("value")?money(v):v==="__base__"?"base (no parallel)":Array.isArray(v)?v.join(" or "):String(v).replace("%"," "))}</span>`).join("");
   const locked=S.phase!=="review";
   $("#summary").innerHTML=`<div class="summary">

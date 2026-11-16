@@ -201,3 +201,7 @@ Same tile and tools as **Arena Club** (order search, overall check, grade editor
 ### Tag box workflow (cards)
 
 One tag box for **Add tag** and **Remove tag**: type tags (Enter or comma makes a pill), pick Add or Remove, then **Apply to admin** / **Remove in admin** for the selected cards. The cards, your selection and the typed tags all stay on screen afterwards, so you can add or remove again straight away. Remove with typed tags sends `remove: [...]` for just those tags (cards without them are left alone); undo adds them back.
+
+### Watches: search by any field
+
+Name a field and its value, in any order and combination: `dial black`, `bracelet textile`, `gender male`, `box original`, `papers no` (or `no papers`), `case 40mm`, `movement automatic`, `condition like new`. Same field twice = either; different fields = all. These combine with brand / model / ref / price as before, e.g. `rolex sea-dweller dial black bracelet steel no papers`.

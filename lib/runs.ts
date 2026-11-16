@@ -618,7 +618,7 @@ async function writeGrades(runId: string, items: { item_id: string; grades: Reco
 // ---------- Arena Club: change any subgrade and/or the overall on cards (logged, undoable) ----------
 const GRADES = ["overall", "centering", "corners", "edges", "surface"] as const;
 type Grade = (typeof GRADES)[number];
-export async function runGradeUpdate(input: { text: string; items: { item_id: string; grades: Partial<Record<Grade, number>> }[]; dry_run?: boolean; approve?: boolean; user: string; as_admin_user_id?: string }) {
+export async function runGradeUpdate(input: { text: string; items: { item_id: string; grades: Partial<Record<Grade, number>> }[]; dry_run?: boolean; approve?: boolean; force?: boolean; user: string; as_admin_user_id?: string }) {
   const items = input.items.filter((x) => x && x.item_id && x.grades && Object.keys(x.grades).length);
   if (!items.length) throw new Error("Change at least one grade first.");
   for (const x of items) for (const [k, v] of Object.entries(x.grades)) {
@@ -648,7 +648,7 @@ export async function runGradeUpdate(input: { text: string; items: { item_id: st
     const next: Record<string, number> = {}, prev: Record<string, number> = {};
     for (const [k, v] of Object.entries(x.grades) as [Grade, number][]) {
       const cur = now(c, k);
-      if (cur === Number(v)) continue;
+      if (cur === Number(v) && !input.force) continue; // force (Grades row): save + approve + rebuild even if admin already has it
       next[k] = Number(v);
       if (cur != null) prev[k] = cur; // undo restores only values we knew
     }

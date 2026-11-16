@@ -188,7 +188,7 @@ export async function POST(req: Request, ctx: Ctx) {
       case "grades":
         return json(await runGradeUpdate({
           text: str("text"), items: Array.isArray(body.items) ? (body.items as { item_id: string; grades: Record<string, number> }[]) : [],
-          dry_run: body.dry_run === true, approve: body.approve === true, user: u.name, as_admin_user_id: adminLoginFor(u),
+          dry_run: body.dry_run === true, approve: body.approve === true, force: body.force === true, user: u.name, as_admin_user_id: adminLoginFor(u),
         }));
       case "corners":
         // Arena Club: every corner annotation → none (override + approve per corner, then label/slab rebuild)

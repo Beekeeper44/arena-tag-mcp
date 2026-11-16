@@ -409,20 +409,62 @@ export function filterWatches(rows: WatchRow[], f: WatchFilters) {
   );
 }
 
+// ---------- "field value" keywords: dial black · bracelet textile · gender male · box original · papers no ----------
+// Any field on the watch tile can be asked for by name. Same field twice = either (OR); different fields = all (AND).
+const FIELDS: Record<string, (r: WatchRow) => unknown[]> = {
+  dial: (r) => [r.dial], movement: (r) => [r.movement], case: (r) => [r.size, r.material], size: (r) => [r.size], material: (r) => [r.material],
+  bracelet: (r) => [r.bracelet, r.bracelet_material, r.bracelet_color], gender: (r) => [r.gender], condition: (r) => [r.condition],
+  box: (r) => [r.box], papers: (r) => [r.papers],
+};
+const FIELD_ALIAS: Record<string, string> = { strap: "bracelet", band: "bracelet", bracelets: "bracelet", straps: "bracelet", dials: "dial", cases: "case", boxes: "box", paper: "papers", sex: "gender", movements: "movement" };
+const fieldOf = (w: string) => { const k = FIELD_ALIAS[w] ?? w; return FIELDS[k] ? k : null; };
+const BEFORE = new Set(["no", "original", "with", "without", "has", "full"]); // "no papers", "original box"
+export function splitFieldFilters(text: string) {
+  const words = text.split(/\s+/).filter(Boolean);
+  const used = new Set<number>(), fields: Record<string, string[]> = {};
+  const clean = (w: string) => w.toLowerCase().replace(/[,:;]+$/g, "").replace(/^[,:;]+/g, "");
+  for (let i = 0; i < words.length; i++) {
+    const key = fieldOf(clean(words[i]));
+    if (!key || used.has(i)) continue;
+    const val: string[] = []; let j = i + 1;
+    for (; j < words.length; j++) {
+      const w = clean(words[j]);
+      if (!w || fieldOf(w) || /^(and|or)$/.test(w)) break;
+      if (BEFORE.has(w) && j + 1 < words.length && fieldOf(clean(words[j + 1]))) break; // "… no papers": "no" belongs to papers
+      val.push(w); used.add(j);
+      if (/[,;]$/.test(words[j])) { j++; break; }
+    }
+    // "no papers" / "original box": the word before the field name is the value
+    if (!val.length && i > 0 && !used.has(i - 1) && BEFORE.has(clean(words[i - 1]))) { val.push(clean(words[i - 1])); used.add(i - 1); }
+    if (val.length) { used.add(i); (fields[key] ||= []).push(val.join(" ")); }
+  }
+  return { rest: words.filter((_, i) => !used.has(i)).join(" "), fields };
+}
+const wordsOf = (v: unknown) => norm(v).split(/[^a-z0-9.]+/).filter(Boolean);
+export function matchFields(r: WatchRow, fields: Record<string, string[]>) {
+  return Object.entries(fields).every(([k, vals]) => {
+    const have = new Set(FIELDS[k](r).flatMap(wordsOf));
+    // every word of the value must be on the watch ("original box" matches "Original Box", "male" doesn't match "female")
+    return vals.some((v) => wordsOf(v).every((w) => have.has(w) || [...have].some((h) => h.startsWith(w) && w.length >= 4)));
+  });
+}
+
 const hasFilter = (f: WatchFilters) =>
   Object.entries(f).some(([, v]) => (Array.isArray(v) ? v.length > 0 : v != null));
 
 export async function searchWatches(text: string) {
-  text = markPlainTag(text);
+  const ff = splitFieldFilters(text); // "dial black bracelet textile gender male" → field filters; the rest reads as before
+  const hasFields = Object.keys(ff.fields).length > 0;
+  text = markPlainTag(hasFields ? ff.rest : text);
   const t0 = Date.now();
   const pulled = await queryWatches(text);
   const all = pulled.rows;
   const p = readWatchRequest(text, all);
   const unknownOnly = !hasFilter(p.filters) && p.missing.length > 0; // e.g. "cartier tank" with no Cartier in inventory
-  const rows = unknownOnly ? [] : filterWatches(all, p.filters);
+  const rows = unknownOnly ? [] : filterWatches(all, p.filters).filter((r) => matchFields(r, ff.fields));
   return {
-    parsed: { action: p.action, tag: p.tag, mode: p.mode, filters: p.filters, post_filters: {} },
-    has_filter: hasFilter(p.filters) || unknownOnly,
+    parsed: { action: p.action, tag: p.tag, mode: p.mode, filters: { ...p.filters, ...ff.fields }, post_filters: {} },
+    has_filter: hasFilter(p.filters) || unknownOnly || hasFields,
     queries: [] as unknown[],
     ms: Date.now() - t0,
     rows,
