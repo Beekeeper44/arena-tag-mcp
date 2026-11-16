@@ -446,6 +446,12 @@ dialog.info{max-width:760px;width:calc(100% - 32px);padding:0}
 /* required tag (*name): filled green, like admin's Edit Tags */
 .reqtog input{accent-color:var(--go)}
 #grid .tile.refreshing{opacity:.55;transition:opacity .2s}
+.uswitch{all:unset;cursor:pointer;display:inline-block;vertical-align:middle;width:38px;height:20px;border-radius:999px;background:var(--line);position:relative;transition:background .15s;margin-right:6px}
+.uswitch i{position:absolute;top:3px;left:3px;width:14px;height:14px;border-radius:50%;background:var(--dim);transition:left .15s,background .15s}
+.uswitch.on{background:color-mix(in srgb,var(--go) 45%,transparent)}
+.uswitch.on i{left:21px;background:var(--go)}
+.uswitch:focus-visible{outline:2px solid var(--go);outline-offset:2px}
+.uswitch[disabled]{opacity:.5;cursor:not-allowed}
 .astatus{flex-wrap:wrap;gap:4px;justify-content:flex-start}
 /* Not accepted: red pill everywhere (tiles, filters, status lines) */
 .ast.st-not_accepted,.atile .ast.st-not_accepted,.ainfo .ast.st-not_accepted,.afields .ast.st-not_accepted,.tile .ast.st-not_accepted{
@@ -725,7 +731,7 @@ a.btn.clickme{border-color:currentColor!important;text-decoration:none}
   </section>
 
   <section id="tab-users" role="tabpanel" aria-labelledby="tabBtn-users" hidden>
-    <p class="dim small">Everyone signed in has full access: search, tag and undo. <b>Admin</b> only adds the Users tab.</p>
+    <p class="dim small">Everyone signed in has full access: search, tag and undo. <b>Admins</b> also add people, set roles and switch them on/off here.</p>
     <div class="nubox">
       <div class="nu">
         <label>Name<input id="nuName" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" data-lpignore="true" data-1p-ignore="true" data-bwignore="true" data-form-type="other" placeholder="Marisa Lopez" autocomplete="off"></label>
@@ -1200,7 +1206,7 @@ function gSync(){
   const g=gPlan(), sel=new Set(S.rows.filter(r=>S.selected.has(r.item_id)).map(r=>r.item_id)), mine=S.gz||(S.gz=new Set());
   const want=k=>(k==="overall"&&g.overall)||(k!=="overall"&&g.clear&&g.subs.has(k));
   for(const key of [...mine]){ const [id,k]=key.split("|"); if(!sel.has(id)||!want(k)){ if(S.ge[id]&&S.ge[id][k]==="0") geSet(id,k,""); mine.delete(key); } }
-  for(const id of sel) for(const [k] of GKEYS) if(want(k)&&!mine.has(id+"|"+k)){ geSet(id,k,"0"); (S.ge[id]||(S.ge[id]={}))[k]="0"; S.geOpen[id]=true; mine.add(id+"|"+k); } // already 0 still goes through the full save
+  for(const id of sel) for(const [k] of GKEYS) if(want(k)&&!(S.ge[id]&&S.ge[id][k]==="0")){ if(!mine.has(id+"|"+k)) geSet(id,k,"0"); (S.ge[id]||(S.ge[id]={}))[k]="0"; S.geOpen[id]=true; mine.add(id+"|"+k); } // already 0 still goes through the full save
 }
 const gTagsOn=()=>S.action==="set"&&!!S.tag&&TAGS_OK(S.tag);
 async function gTagStep(ids,dry){
@@ -1216,7 +1222,7 @@ async function gApply(){
   const g=gPlan(), sel=S.rows.filter(r=>S.selected.has(r.item_id)), dry=$("#dry").checked;
   if(!sel.length){ $("#barmsg").innerHTML=`<span class="warn-txt">Select the cards first.</span>`; return; }
   gSync(); render();
-  const zeros=geCount()>0, corners=gTaskOn();
+  const zeros=geCount()>0||gPlan().overall||(gPlan().clear&&gPlan().subs.size>0), corners=gTaskOn(); // lit = do it, even on cards already at 0
   if(!zeros&&!corners&&!gTagsOn()){ $("#barmsg").innerHTML=`<span class="warn-txt">Those grades are already 0.</span>`; return; }
   const lab={centering:"Centering",corners:"Corners",edges:"Edges",surface:"Surface",overall:"Overall"};
   const zl=Object.entries(S.ge).filter(([,o])=>Object.keys(o).length).slice(0,8).map(([id,o])=>{ const c=S.matched.find(x=>x.item_id===id)||{};
@@ -1231,11 +1237,14 @@ async function gApply(){
   if(!ok) return;
   // one progress bar per step (green = done, red = failed); the per-card detail folds away under "Details"
   const steps=[], details=[], N=sel.length, zN=Object.values(S.ge).filter(o=>Object.keys(o).length).length;
-  if(corners) steps.push({k:"c",label:gParts().map(p=>p[0].toUpperCase()+p.slice(1)+"s").join(" + ")+" → none",n:N});
-  if(zeros) steps.push({k:"z",label:"Grades → 0 + approve",n:zN});
+  if(corners) steps.push({k:"c",label:"① Remove subgrades task",n:N});
+  const g0=gPlan(), subKeys=g0.clear?[...g0.subs]:[], doSubs=subKeys.length>0, doOver=!!g0.overall;
+  if(doSubs) steps.push({k:"zs",label:"② Subgrades → 0",n:N});
+  if(doOver) steps.push({k:"zo",label:"③ Overall → 0",n:N});
   if(gTagsOn()) steps.push({k:"t",label:"Tags",n:N});
+  steps.forEach(st=>st.title={c:`${gParts().join(", ")} → none, under your name`,zs:"saved, label & slab rebuilt, approved",zo:"saved, label & slab rebuilt, approved",t:"added alongside each card's other tags"}[st.k]||"");
   const pct=(x,n)=>n?Math.round(100*x/n):0;
-  const draw=()=>{ $("#barmsg").innerHTML=`<div class="prog" role="status" aria-live="polite">${steps.map(st=>`<div class="pstep ${st.state||"wait"}"><span class="plabel">${esc(st.label)}</span>
+  const draw=()=>{ $("#barmsg").innerHTML=`<div class="prog" role="status" aria-live="polite">${steps.map(st=>`<div class="pstep ${st.state||"wait"}"><span class="plabel" title="${esc(st.title||"")}">${esc(st.label)}</span>
       <div class="pbar" aria-hidden="true"><i style="width:${st.state==="done"?pct(st.ok,st.n):0}%"></i><b style="width:${st.state==="done"?pct(st.fail,st.n):0}%"></b></div>
       <span class="pnum">${st.state==="run"?"working…":st.state==="done"?`${st.ok}/${st.n}${st.fail?` · <span class="obad">${st.fail} failed</span>`:""}`:"waiting"}</span></div>`).join("")}
       ${details.length?`<details class="pdet"><summary>Details · undo from Recent runs</summary>${details.join("<br>")}</details>`:""}</div>`; };
@@ -1243,8 +1252,23 @@ async function gApply(){
   draw();
   if(corners) await run("c",async st=>{ const r=await cornersNone({noAsk:true,skipImages:zeros&&!dry,parts:gParts()});
     st.ok=r&&r.dry_run?(r.would_write||0):(r&&r.succeeded)||0; st.fail=(r&&r.failed)||0; details.push($("#barmsg").innerHTML); gSync(); render(); });
-  if(zeros&&geCount()>0) await run("z",async st=>{ const r=await saveOverall({noAsk:true,force:true});
-    st.ok=r&&r.dry_run?(r.would_write||0):(r&&r.succeeded)||0; st.fail=r&&r.error?st.n:((r&&r.failed)||0)+((r&&r.mismatch)||0); details.push($("#barmsg").innerHTML); });
+  // each grade step is its own full save: grades written, label + slab rebuilt, review approved (even if the card already shows 0)
+  const gradeStep=async(st,keys,label)=>{
+    const items=sel.map(r=>({item_id:r.item_id,grades:Object.fromEntries(keys.map(k=>[k,0]))}));
+    try{
+      const r=await api("grades",{text:S.text,items,dry_run:dry,approve:true,force:true});
+      if(r.dry_run){ st.ok=r.would_write||0; st.fail=0; details.push(`Dry run · ${label}: would save on ${st.ok}`); return; }
+      (r.written_ids||[]).forEach(id=>{ const c=S.matched.find(x=>x.item_id===id); if(!c) return; snapCheck(c);
+        for(const k of keys){ if(k==="overall"){ c.grade_num=0; c.check_overall=0; } else c[k]=0; }
+        if(Number(c.grade_num)===0){ c.authentic=true; c.overall_check="pass"; c.grade=(c.grading_company||"arena_club")+" authentic"; }
+        if(S.ge[id]) keys.forEach(k=>delete S.ge[id][k]); });
+      st.ok=(r.written_ids||[]).length; st.fail=(r.failed||0)+(r.mismatch||0);
+      details.push(`✓ ${label}: saved, label & slab rebuilt, approved on ${st.ok}${st.fail?` · <span class="obad">${st.fail} failed</span>`:""} <span class="dim">· run ${esc(r.run_id||"")}</span>`);
+    }catch(e){ st.ok=0; st.fail=st.n; details.push(`<span class="obad">${label}: ${esc(e.message)}</span>`); }
+  };
+  if(doSubs) await run("zs",st=>gradeStep(st,subKeys,"Subgrades → 0"));
+  if(doOver) await run("zo",st=>gradeStep(st,["overall"],"Overall → 0"));
+  if(doSubs||doOver){ S.gz=new Set(); recompute(false); }
   if(gTagsOn()) await run("t",async st=>{ const r=await gTagStep(sel.map(x=>x.item_id),dry); st.ok=r.ok; st.fail=r.fail; details.push(r.html); });
   draw();
   if(S.kind==="arena"&&!dry){ try{ await liveDates(sel); render(); draw(); }catch{} } // tiles show what admin has now
@@ -2086,12 +2110,10 @@ function renderBar(n,replacing){
   const bar=$("#bar"); bar.hidden=false;
   const cb=$("#confirmBtn"), msg=$("#barmsg");
   if(S&&S.kind==="arena"&&gActive()&&S.phase==="review"){
-    // count only the cards that will actually change; ones already at 0 are skipped
-    const sel=S.rows.filter(r=>S.selected.has(r.item_id)), g=gPlan(), n=sel.filter(r=>S.ge[r.item_id]&&Object.keys(S.ge[r.item_id]).length).length;
-    const zeroOnly=!gTaskOn(), same=sel.length-n;
-    cb.hidden=false; cb.disabled=zeroOnly&&!n; cb.className="btn big primary"; cb.textContent=`Apply to admin (${zeroOnly?n:sel.length})`;
-    const cnt=zeroOnly?n:sel.length;
-    msg.innerHTML=`On <b>${cnt}</b> card${cnt===1?"":"s"}: ${gSummary()}.${same&&zeroOnly?` <span class="dim">${same} already 0, skipped.</span>`:""}`;
+    // every selected card gets the lit steps, even ones already at 0 (they're written over: full save + approve)
+    const sel=S.rows.filter(r=>S.selected.has(r.item_id)), cnt=sel.length;
+    cb.hidden=false; cb.disabled=!cnt; cb.className="btn big primary"; cb.textContent=`Apply to admin (${cnt})`;
+    msg.innerHTML=`On <b>${cnt}</b> card${cnt===1?"":"s"}: ${gSummary()}.`;
     return;
   }
   if(S&&(ARCHK(S.kind)||S.kind==="arena"||S.kind==="cards")&&planList().length&&S.phase==="review"){
@@ -2491,16 +2513,21 @@ function pwPanel(show){ const el=$("#pwPanel"); if(!el) return;
   else el.innerHTML=""; }
 pwPanel(false);
 async function loadUsers(){
-  if(!ME||!ME.is_admin){ $("#usersTbl").innerHTML=`<div class="dim small">Only admins can manage people.</div>`; return; }
   let users; try{ users=await api("users"); }catch(e){ $("#usersTbl").textContent=e.message; return; }
+  if(!ME||!ME.is_admin){ // members: read-only list
+    $("#usersTbl").innerHTML=`<div class="warn" style="margin-bottom:10px">You're a <b>member</b>: you can see who has access, but only a TAG-BOT <b>admin</b> can add people, change roles or switch them on/off.</div>
+      <table><tr><th>person</th><th>role</th><th>status</th><th>last sign-in</th></tr>${users.map(u=>`<tr><td><b>${esc(u.name)}</b><br><span class="dim">${esc(u.email)}</span></td><td>${esc(u.role)}</td><td>${u.active?"on":`<span class="dim">off</span>`}</td><td class="dim">${u.last_login_at?when(u.last_login_at):"—"}</td></tr>`).join("")}</table>`;
+    document.querySelectorAll("#tab-users .nubox").forEach(e=>e.hidden=true); return; }
+  document.querySelectorAll("#tab-users .nubox").forEach(e=>e.hidden=false);
   $("#usersTbl").innerHTML=`<table><tr><th>person</th><th>role</th><th>admin login</th><th>status</th><th>last sign-in</th><th></th></tr>${users.map(u=>`<tr data-id="${esc(u.id)}">
     <td><b>${esc(u.name)}</b><br><span class="dim">${esc(u.email)}</span></td>
     <td><select data-f="role" ${u.id===ME.id?"disabled":""}>${["admin","member"].map(r=>`<option ${r===u.role?"selected":""}>${r}</option>`).join("")}</select></td>
     <td>${u.admin_user_id?`<span class="ok">linked</span> <span class="dim small">${esc(u.admin_email||u.email)}</span>`:`<span class="bad">not linked</span>`}<br>
       <button class="btn link" data-act="relink">link by admin email</button><button class="btn link" data-act="test">test</button><button class="btn link" data-act="setid">paste ID</button></td>
-    <td>${!u.active?`<span class="dim">off</span>`:u.has_password?"active":`<span class="bad">invited</span>`}</td>
+    <td><button type="button" class="uswitch${u.active?" on":""}" data-act="toggle" role="switch" aria-checked="${u.active}" aria-label="${esc(u.name)} can sign in" ${u.id===ME.id?"disabled title=\"You can't turn yourself off\"":""}><i></i></button>
+      <span class="small ${u.active?"":"dim"}">${!u.active?"off · can't sign in":u.has_password?"on":`<span class="bad">on · invited</span>`}</span></td>
     <td class="dim">${u.last_login_at?when(u.last_login_at):"—"}</td>
-    <td>${u.id===ME.id?`<span class="dim small">you</span>`:`${u.active?`<button class="btn link" data-act="invite">${u.has_password?"reset password link":"new invite link"}</button>`:""}<button class="btn link" data-act="toggle">${u.active?"turn off":"turn on"}</button>`}</td>
+    <td>${u.id===ME.id?`<span class="dim small">you</span>`:`${u.active?`<button class="btn link" data-act="invite">${u.has_password?"reset password link":"new invite link"}</button>`:""}`}</td>
   </tr><tr class="uout" data-for="${esc(u.id)}"><td colspan="6" style="padding:0 8px;border:0"></td></tr>`).join("")}</table>`;
   const out=id=>document.querySelector(`tr.uout[data-for="${id}"] td`);
   $("#usersTbl").querySelectorAll("select[data-f=role]").forEach(sel=>sel.onchange=async()=>{const id=sel.closest("tr").dataset.id; try{await post("users-update",{id,role:sel.value}); out(id).innerHTML=`<div class="small ok" style="padding:6px 0">Role set to ${esc(sel.value)}.</div>`}catch(e){out(id).innerHTML=`<div class="small bad" style="padding:6px 0">${esc(e.message)}</div>`}});
@@ -2525,7 +2552,7 @@ async function boot(){
   try{ me=await api("me"); }catch{ return; }
   ME=me; hideLoginForm();
   $("#whoami").innerHTML=`Signed in as <b>${esc(me.user)}</b><span class="rolebadge">${esc(me.role)}</span>`;
-  $("#tabBtn-users").hidden=!me.is_admin;
+  $("#tabBtn-users").hidden=false; // members see the list; only admins can change it
   document.body.classList.toggle("readonly",!me.can_write);
   window.MAX_ITEMS=me.max_items_per_run||1000; window.MAX_ARCHIVE=me.max_archive_per_run||200;
   const b=$("#modeBadge");

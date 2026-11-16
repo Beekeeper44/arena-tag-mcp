@@ -56,6 +56,9 @@ export async function currentUser(req: Request): Promise<User | null> {
   const [id, at] = Buffer.from(v, "base64url").toString().split("|");
   if (!id || Date.now() - Number(at) > DAYS * 86400_000) return null;
   const [u] = await q<User>(`SELECT ${COLS} FROM ev_users WHERE id=$1 AND active`, [id]);
+  // ADMIN_EMAILS (Vercel, comma-separated): these people are always TAG-BOT admins, whatever their saved role
+  const boss = (process.env.ADMIN_EMAILS || "").split(",").map((e) => e.trim().toLowerCase()).filter(Boolean);
+  if (u && boss.includes(String(u.email).toLowerCase())) u.role = "admin";
   return u ?? null;
 }
 

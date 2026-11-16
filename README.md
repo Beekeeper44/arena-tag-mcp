@@ -205,3 +205,7 @@ One tag box for **Add tag** and **Remove tag**: type tags (Enter or comma makes 
 ### Watches: search by any field
 
 Name a field and its value, in any order and combination: `dial black`, `bracelet textile`, `gender male`, `box original`, `papers no` (or `no papers`), `case 40mm`, `movement automatic`, `condition like new`. Same field twice = either; different fields = all. These combine with brand / model / ref / price as before, e.g. `rolex sea-dweller dial black bracelet steel no papers`.
+
+### Users (TAG-BOT accounts)
+
+Everyone signed in sees the **Users** tab (who has access, role, on/off). Only **admins** can add people, change member/admin, send invite links, link admin logins and switch people on/off. `ADMIN_EMAILS` in Vercel (comma-separated) makes those accounts admins whatever their saved role, so an admin can always get back in.

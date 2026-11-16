@@ -37,8 +37,8 @@ export async function GET(req: Request, ctx: Ctx) {
           id: u.id, user: u.name, email: u.email, role: u.role, is_admin: can(u, "admin"), can_write: true,
           linked: !!u.admin_user_id, dry_run: config.dryRun(), max_items_per_run: config.maxItemsPerRun(), max_archive_per_run: config.maxArchivePerRun(),
         });
-      case "users":
-        return forbid(u, "admin") ?? json(await listUsers());
+      case "users": // everyone can see who has access; only admins can change it
+        return json(await listUsers());
       case "img": {
         // Same-origin copy of a watch photo so the screen can cut out its white background (signed-in only).
         const src = new URL(req.url).searchParams.get("u") || "";
