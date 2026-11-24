@@ -2997,7 +2997,7 @@ const dueCls=d=>{ if(!d) return ""; const t=dueDay(d), today=new Date(); today.s
 function ordersRender(){
   const p=$("#ordersPanel"), o=OP.orders, n=OP.sel.size, nums=()=>o.filter(x=>OP.sel.has(x.order)).map(x=>x.order), txt=()=>"orders "+nums().join(", ");
   p.innerHTML=`<div class="otools"><b>${o.length} order${o.length===1?"":"s"}</b> <span class="dim small">${OP.hasDue?"soonest due date first":"no due date column in the question, so sorted by order number"} · drag over the order numbers to highlight them and Cmd/Ctrl+C to copy, or click/drag the other columns to pick rows</span>
-    <span style="margin-left:auto;display:flex;gap:6px;flex-wrap:wrap"><button type="button" class="btn link" id="oAll">Select all</button><button type="button" class="btn link" id="oNone">Clear</button>
+    <span style="margin-left:auto;display:flex;gap:6px;flex-wrap:wrap;align-items:center">${OP.at?`<span class="dim small">read ${esc(OP.at.toLocaleTimeString([], {hour:"numeric",minute:"2-digit"}))}</span>`:""}<button type="button" class="btn" id="oRefresh" title="Read Metabase 48181 again: orders, due dates, card counts and crop marks">↻ Refresh</button><button type="button" class="btn link" id="oAll">Select all</button><button type="button" class="btn link" id="oNone">Clear</button>
     <button type="button" class="btn" id="oCopy" ${n?"":"disabled"}>Copy ${n||""}</button><button type="button" class="btn primary" id="oFind" ${n?"":"disabled"}>Search ${n||""} order${n===1?"":"s"}</button></span></div>
     <div class="olist"><table><thead><tr><th></th><th>Order</th><th title="red = past due · orange = due within 3 days">Due</th><th>Cards</th><th>Status</th><th title="TAG-BOT ran Approve crop on this order, and/or tick it as cropped by hand">Crop</th></tr></thead><tbody>${o.map((x,i)=>`<tr data-oi="${i}" class="${OP.sel.has(x.order)?"on":""}"><td><input type="checkbox" tabindex="-1" ${OP.sel.has(x.order)?"checked":""} aria-label="Pick order ${esc(x.order)}"></td><td class="onum"><b>${esc(x.order)}</b></td><td class="${dueCls(x.due)}">${esc(fmtDue(x.due))}</td><td>${x.cards}</td><td class="dim small">${esc(Object.entries(x.statuses).map(([k,v])=>`${k}${v>1?" ×"+v:""}`).join(" · "))}</td><td class="ocrop">${cropCell(x.order)}</td></tr>`).join("")}</tbody></table></div>`;
   // drag down (or up) the list to highlight several orders; click toggles one; Shift+click a range; Cmd/Ctrl+C copies
@@ -3017,6 +3017,7 @@ function ordersRender(){
   const lst=p.querySelector(".olist"); lst.tabIndex=0;
   lst.onkeydown=e=>{ if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==="c"&&OP.sel.size){ e.preventDefault(); $("#oCopy").click(); }
     if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==="a"){ e.preventDefault(); $("#oAll").click(); } };
+  $("#oRefresh").onclick=()=>ordersLoad();
   $("#oAll").onclick=()=>{ o.forEach(x=>OP.sel.add(x.order)); ordersRender(); };
   $("#oNone").onclick=()=>{ OP.sel.clear(); ordersRender(); };
   $("#oCopy").onclick=async()=>{ const t=nums().join("\n"); try{ await navigator.clipboard.writeText(t); $("#oCopy").textContent="Copied ✓"; }catch{ prompt("Copy these orders:",t); } }; // just the numbers, one per line
@@ -3028,12 +3029,19 @@ document.addEventListener("copy",e=>{ const sel=document.getSelection(); if(!sel
   const p=$("#ordersPanel"); if(!p||p.hidden||!p.contains(sel.anchorNode)) return;
   const nums=[...p.querySelectorAll("td.onum")].filter(td=>sel.containsNode(td,true)).map(td=>td.textContent.trim()).filter(Boolean);
   if(nums.length){ e.preventDefault(); e.clipboardData.setData("text/plain",nums.join("\n")); } });
+async function ordersLoad(){
+  const p=$("#ordersPanel"), first=!OP.loaded||OP.q!==ARENA_V;
+  if(first) p.innerHTML=`<div class="dim small"><span class="spin"></span> Reading every order in Metabase 48181…</div>`;
+  else { const b=$("#oRefresh"); if(b){ b.disabled=true; b.innerHTML=`<span class="spin"></span> Refreshing…`; } }
+  try{ const r=await api("arena-orders",{}); OP.orders=r.orders||[]; OP.hasDue=!!r.has_due; OP.marks=r.marks||{}; OP.loaded=true; OP.q=ARENA_V; OP.at=new Date();
+    const still=new Set(OP.orders.map(o=>o.order)); OP.sel=new Set([...OP.sel].filter(o=>still.has(o))); // keep picks that are still in the list
+    ordersRender(); }
+  catch(e){ if(first) p.innerHTML=`<span class="warn-txt">Couldn't read the orders: ${esc(e.message)}</span>`; else { ordersRender(); $("#ordersPanel .otools").insertAdjacentHTML("beforeend",`<span class="warn-txt">Refresh failed: ${esc(e.message)}</span>`); } }
+}
 async function ordersOpen(){
   const p=$("#ordersPanel"), btn=$("#ordersBtn"), open=p.hidden; p.hidden=!open; btn.setAttribute("aria-expanded",String(open)); if(!open) return;
   if(OP.loaded&&OP.q===ARENA_V){ ordersRender(); return; }
-  p.innerHTML=`<div class="dim small"><span class="spin"></span> Reading every order in Metabase 48181…</div>`;
-  try{ const r=await api("arena-orders",{}); OP.orders=r.orders||[]; OP.hasDue=!!r.has_due; OP.marks=r.marks||{}; OP.loaded=true; OP.q=ARENA_V; ordersRender(); }
-  catch(e){ p.innerHTML=`<span class="warn-txt">Couldn't read the orders: ${esc(e.message)}</span>`; }
+  await ordersLoad();
 }
 function setKind(k){
   CROP=k==="crop"; const fb=document.querySelector('#form button[type=submit]'); if(fb) fb.disabled=false;

@@ -216,7 +216,7 @@ Same tile and tools as **Arena Club** (order search, grades, status, tags), sear
 
 ### Orders pill (Crop tile)
 
-Under the tiles, **Orders · Metabase 48181** lists every order in the Crop question, grouped by order: earliest **due date** first (any column with "DUE" in its name; red = past due, orange = within 3 days), card count and card statuses. Click to pick, Shift+click for a range, **Select all**, then **Copy** (just the order numbers, one per line; or drag over the order numbers like normal text and Cmd/Ctrl+C) or **Search N orders** (fills the prompt and searches them all at once). The prompt also takes several orders pasted in any form: commas, spaces or one per line.
+Under the tiles, **Orders · Metabase 48181** lists every order in the Crop question, grouped by order: earliest **due date** first (any column with "DUE" in its name; red = past due, orange = within 3 days), card count and card statuses. **↻ Refresh** re-reads 48181 (orders, due dates, card counts, crop marks) and keeps your picks. Click to pick, Shift+click for a range, **Select all**, then **Copy** (just the order numbers, one per line; or drag over the order numbers like normal text and Cmd/Ctrl+C) or **Search N orders** (fills the prompt and searches them all at once). The prompt also takes several orders pasted in any form: commas, spaces or one per line.
 - **Crop column** in the Orders list: **✓ TAG-BOT** when Approve crop ran on the order (hover for who, when and how many cards; recorded automatically after each live run), and a **manual** tick for orders cropped by hand. Both are saved for the whole team (table `crop_marks`).
 
 ### Photo checks (Crop tile)
