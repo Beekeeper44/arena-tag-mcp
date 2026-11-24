@@ -1279,8 +1279,8 @@ const arenaStatusRow=r=>{ const auth=String(r.auth_status||"").toLowerCase();
   const st=String(r.status||"").toLowerCase(), isArc=!!(r.archived_at||st==="archived"), isRsc=!!(r.rescan_at||st==="pending_rescan"), isNa=auth==="not_accepted";
   const x=(html,cond)=>cond?html.replace('class="ast','class="ast strk'):html;
   const statusPill=r.status?x(stHtml(r.status),(p.archive==="remove"&&st==="archived")||(p.pending_rescan==="remove"&&st==="pending_rescan")):"";
-  const bits=[statusPill, r.crop_state==="done"||(!r.crop_state&&r.crop_ok&&r.crop_ok.length)?`<span class="ast cropok" title="Crop approved in admin (front + back)">crop ✓</span>`
-      :r.crop_state==="part"?`<span class="ast croppart" title="Crop: front ${esc(r.crop_sides.front||"—")} · back ${esc(r.crop_sides.back||"—")}">crop ${r.crop_sides.front==="approved"?"front ✓":"back ✓"} only</span>`
+  const bits=[statusPill, r.crop_state==="done"||(!r.crop_state&&r.crop_ok&&r.crop_ok.length)?`<span class="ast cropok" title="Crop approved in admin (front + back)">approved crop</span>`
+      :r.crop_state==="part"?`<span class="ast croppart" title="Crop: front ${esc(r.crop_sides.front||"—")} · back ${esc(r.crop_sides.back||"—")}">${r.crop_sides.front==="approved"?"approved front":"approved back"}</span>`
       :r.crop_state==="todo"?`<span class="ast croptodo" title="Crop not approved yet">crop to do</span>`:"",
       (()=>{ const sd=sidesOf(r.item_id); return typeof ARENA_V!=="undefined"&&ARENA_V==="crop"&&!(sd.front&&sd.back)?`<span class="ast croppick" title="Approve crop will do only this side">${sd.front?"approve front only":sd.back?"approve back only":"crop: skip"}</span>`:""; })(),
     auth&&auth!=="none"?x(`<span class="ast st-not_accepted st-bad">${esc(isNa?"Not accepted":r.auth_status)}</span>`,p.not_accepted==="remove"&&isNa):"",
