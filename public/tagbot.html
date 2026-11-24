@@ -346,7 +346,9 @@ h1 span{color:var(--go)}
 .pfails{font-size:12px;display:grid;gap:4px;margin-top:2px;max-height:110px;overflow:auto}
 .pfails .pf{display:inline-block;margin:0 10px 0 6px}
 /* info popup: front + back side by side */
-#info .infonav{display:inline-flex;align-items:center;gap:8px;margin-right:auto}
+#info .infonav{display:inline-flex;align-items:center;gap:8px;margin-right:auto;flex-wrap:wrap}
+#info .isel{border-color:var(--line);color:var(--dim)}
+#info .isel.on{background:var(--go);border-color:var(--go);color:var(--go-ink,#04120a);font-weight:800}
 /* two-photo popup: wide enough for front + back next to the details, and always fits the window (no scrolling) */
 #info:has(.pic2){width:min(1280px,96vw);max-width:96vw;max-height:94vh;overflow:hidden}
 #info:has(.pic2) .in{grid-template-columns:minmax(0,1.35fr) minmax(280px,1fr);align-items:start;max-height:calc(94vh - 84px);overflow:auto}
@@ -2150,15 +2152,20 @@ function showInfo(id){
       ${r.card_url?`<a class="btn clickme" href="${esc(r.card_url)}" target="_blank" rel="noopener" title="Open in admin">Click Me</a>`:`<a class="btn clickme" href="https://admin.arenaclub.com/cards/${esc(r.item_id)}/estimate-value" target="_blank" rel="noopener" title="Open in admin">Click Me</a>`}
       <span class="infonav"><button class="btn" type="button" id="infoPrev" ${pos>0?"":"disabled"} title="Previous card (← or Shift+Space)">‹ Prev</button>
       <span class="dim small">${pos+1} of ${list.length}</span>
-      <button class="btn" type="button" id="infoNext" ${pos<list.length-1?"":"disabled"} title="Next card (Space or →)">Next ›</button></span>
+      <button class="btn" type="button" id="infoNext" ${pos<list.length-1?"":"disabled"} title="Next card (Space or →)">Next ›</button>
+      ${S.phase==="review"?`<button class="btn isel${S.selected.has(r.item_id)?" on":""}" type="button" id="infoSel" aria-pressed="${S.selected.has(r.item_id)}" title="Select / deselect this card (X)">${S.selected.has(r.item_id)?"✓ Selected":"Not selected"}</button>`:""}</span>
       <button class="btn primary" type="button" id="infoClose">Close</button>
     </div>`;
   if(!d.open) d.showModal(); $("#infoClose").onclick=()=>d.close();
   const go=k=>{ const t=list[pos+k]; if(t) showInfo(t.item_id); };
   $("#infoPrev").onclick=()=>go(-1); $("#infoNext").onclick=()=>go(1);
+  // select / deselect this card without leaving the popup (X); the tiles and counts behind update
+  const toggleSel=()=>{ if(S.phase!=="review") return; S.selected.has(r.item_id)?S.selected.delete(r.item_id):S.selected.add(r.item_id); render(); showInfo(r.item_id); };
+  const sb=$("#infoSel"); if(sb) sb.onclick=toggleSel;
   // Space / → next card, Shift+Space / ← previous (only while this popup is open)
   d.onkeydown=e=>{ if(e.target&&/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return;
-    if(e.key===" "||e.key==="ArrowRight"||e.key==="ArrowLeft"){ e.preventDefault(); go(e.key==="ArrowLeft"||(e.key===" "&&e.shiftKey)?-1:1); } };
+    if(e.key===" "||e.key==="ArrowRight"||e.key==="ArrowLeft"){ e.preventDefault(); go(e.key==="ArrowLeft"||(e.key===" "&&e.shiftKey)?-1:1); }
+    else if(e.key.toLowerCase()==="x"){ e.preventDefault(); toggleSel(); } };
   $("#infoNext").focus({preventScroll:true});
 }
 let WI=null; // index into S.rows while the watch popup is open
