@@ -209,3 +209,7 @@ Name a field and its value, in any order and combination: `dial black`, `bracele
 ### Users (TAG-BOT accounts)
 
 Everyone signed in sees the **Users** tab (who has access, role, on/off). Only **admins** can add people, change member/admin, send invite links, link admin logins and switch people on/off. alan@arenaclub.com and austin.crawford@arenaclub.com are always admins; `ADMIN_EMAILS` in Vercel (comma-separated) adds more. Those accounts are admins whatever their saved role, so an admin can always get back in.
+
+## Crop tile
+
+Same tile and tools as **Arena Club** (order search, grades, status, tags), searching Metabase question **48181** ("crop"; `ARENA_CROP_CARD_ID` overrides). Adds an **Approve crop** row: approve the front + back crop tasks on the selected cards. Approve = admin's Verify crop → Approve: `PATCH /grades/crop/{scan grade id}` on each crop task's scan grade (front_scan / back_scan) with `{ status:"approved", notes:[{kind:"secondary", …}] }` under the TAG-BOT user's name. Sent 6 cards at a time with progress, one retry, and a failed list.

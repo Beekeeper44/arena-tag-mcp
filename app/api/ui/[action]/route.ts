@@ -3,8 +3,8 @@ import { config } from "@/lib/config";
 import { searchArchived } from "@/lib/archived";
 import { runArchivedStatus, undoArchivedStatus } from "@/lib/archived-status";
 import { type CardFilters, type PostFilters } from "@/lib/metabase";
-import { runSelection, runWatchSelection, runArenaSelection, runArchivedSelection, runOverallUpdate, runGradeUpdate, runCornersNone, undoRun, listRuns } from "@/lib/runs";
-import { searchArena, useArenaCustomer } from "@/lib/arena";
+import { runSelection, runWatchSelection, runArenaSelection, runArchivedSelection, runOverallUpdate, runGradeUpdate, runCornersNone, undoRun, listRuns, runCropApprove } from "@/lib/runs";
+import { searchArena, useArenaVariant } from "@/lib/arena";
 import { openAdminSession, liveCards, liveWatches } from "@/lib/admin";
 import { listPrompts, addPrompt, renamePrompt, deletePrompt } from "@/lib/ui";
 import {
@@ -72,7 +72,7 @@ export async function POST(req: Request, ctx: Ctx) {
   }
 
   const str = (k: string) => String(body[k] ?? "").trim();
-  if (body.arena_variant === "customer") useArenaCustomer(); // Arena Club Customer tile: customer-orders question for this request
+  if (body.arena_variant === "customer" || body.arena_variant === "crop") useArenaVariant(String(body.arena_variant)); // Customer / Crop tiles: their own question for this request
   if (action === "logout") return json({ ok: true }, 200, { "Set-Cookie": clearCookie() });
   try {
     if (action === "login") {
@@ -193,6 +193,8 @@ export async function POST(req: Request, ctx: Ctx) {
       case "corners":
         // Arena Club: every corner annotation → none (override + approve per corner, then label/slab rebuild)
         return json(await runCornersNone({ text: str("text"), item_ids: Array.isArray(body.item_ids) ? (body.item_ids as string[]) : [], dry_run: body.dry_run === true, skip_images: body.skip_images === true, parts: Array.isArray(body.parts) ? (body.parts as string[]) : undefined, user: u.name, as_admin_user_id: adminLoginFor(u) }));
+      case "crop-approve":
+        return forbid(u, "member") ?? json(await runCropApprove({ text: str("text"), item_ids: Array.isArray(body.item_ids) ? (body.item_ids as string[]) : [], dry_run: body.dry_run === true, user: u.name, as_admin_user_id: adminLoginFor(u) }));
       case "live": {
         // current grades straight from admin for the cards on screen (Metabase lags behind)
         const ids = (Array.isArray(body.ids) ? (body.ids as string[]) : []).slice(0, 2000);

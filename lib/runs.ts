@@ -3,7 +3,7 @@
 import { randomBytes } from "crypto";
 import { config, validateTag } from "./config";
 import { queryCards, queryCardsDetailed, summarize, type CardFilters, type CardRow, type PostFilters } from "./metabase";
-import { openAdminSession, liveCards, patchTag, regenerateImages, approveReview, changeGradesLikeReview, graderIdFor, cornersNow, overrideCorner, edgesNow, overrideEdge, surfacesNow, overrideSurface, cardGrades, type WriteResult, type WriteKind, type CornerLabel, type CornerNow } from "./admin";
+import { openAdminSession, liveCards, patchTag, regenerateImages, approveReview, changeGradesLikeReview, graderIdFor, cornersNow, overrideCorner, edgesNow, overrideEdge, surfacesNow, overrideSurface, cropsNow, approveCrop, cardGrades, type WriteResult, type WriteKind, type CornerLabel, type CornerNow } from "./admin";
 import { searchWatches, watchLabel, type WatchRow } from "./watches";
 import { searchArena, type ArenaCard } from "./arena";
 import { searchArchived, type ArchivedCard } from "./archived";
@@ -761,4 +761,38 @@ export async function runCornersNone(input: { text: string; item_ids: string[]; 
   const status = dry ? "dry_run_completed" : res.failed ? (res.succeeded ? "partial" : "failed") : "completed";
   await q(`UPDATE tag_runs SET status=$2, finished_at=now(), result=$3 WHERE id=$1`, [id, status, JSON.stringify({ ...res, cards: undefined })]);
   return { run_id: id, status, dry_run: dry, ...res };
+}
+
+
+// ---------- Crop tile: approve the front + back crop tasks on the selected cards (under the TAG-BOT user's name) ----------
+export async function runCropApprove(input: { text: string; item_ids: string[]; dry_run?: boolean; user: string; as_admin_user_id?: string }) {
+  const ids = [...new Set((input.item_ids || []).filter((x) => /^[0-9a-f-]{36}$/i.test(String(x))))];
+  if (!ids.length) throw new Error("Select the cards first.");
+  if (ids.length > config.maxArchivePerRun()) throw new Error(`${ids.length} cards is over the ${config.maxArchivePerRun()}-card limit.`);
+  const dry = config.dryRun() || input.dry_run === true;
+  const id = newId();
+  await q(
+    `INSERT INTO tag_runs (id, status, action, tag, mode, filters, post_filters, requested_by, preview_count, staged_by, staged_at, staged_count, approved_by, live_at, dry_run, expires_at, kind)
+     VALUES ($1,'executing','crop',NULL,'overwrite',$2,'{}',$3,$4,$3,now(),$4,$3,now(),$5,$6,'crop')`,
+    [id, JSON.stringify({ text: input.text, source: "crop", crop: "approve" }), input.user, ids.length, dry, hoursFromNow(1)]
+  );
+  const session = await openAdminSession(input.as_admin_user_id);
+  const cards: { item_id: string; sides: string[]; error?: string }[] = [];
+  try {
+    const userId = input.as_admin_user_id || config.sessionUserId();
+    const graderId = await graderIdFor(session, userId);
+    const who = { userId, graderId, name: input.user };
+    await Promise.all(ids.map(async (item_id) => {
+      const row = { item_id, sides: [] as string[], error: undefined as string | undefined };
+      try {
+        const crops = await cropsNow(session, item_id);
+        if (!crops.length) throw new Error("no crop task on this card");
+        for (const c of crops) { if (!dry) await approveCrop(session, c, who); row.sides.push(c.side); }
+      } catch (e) { row.error = e instanceof Error ? e.message : String(e); }
+      cards.push(row);
+    }));
+  } finally { await session.revoke(); }
+  const failed = cards.filter((c) => c.error).length;
+  await q(`UPDATE tag_runs SET status=$2, finished_at=now(), result=$3 WHERE id=$1`, [id, dry ? "dry_run_completed" : failed ? "partial" : "completed", JSON.stringify({ succeeded: cards.length - failed, failed })]);
+  return { run_id: id, dry_run: dry, succeeded: cards.length - failed, failed, cards };
 }

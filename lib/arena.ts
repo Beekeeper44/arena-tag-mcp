@@ -15,8 +15,15 @@ const checkCardId = () => Number(process.env.ARENA_CHECK_CARD_ID || 15214) || nu
 // "Arena Club Customer" tile: the same tile and tools, searching customer orders through ARENA_CUSTOMER_CARD_ID instead.
 const variant = new AsyncLocalStorage<string>();
 export const useArenaCustomer = () => variant.enterWith("customer");
+/** Same tile + tools on another question: "customer" (47455) or "crop" (48181). */
+export const useArenaVariant = (v: string) => variant.enterWith(v);
 export const arenaIsCustomer = () => variant.getStore() === "customer";
-const cardId = () => arenaIsCustomer() ? Number(process.env.ARENA_CUSTOMER_CARD_ID || 47455) /* "Arena Club Customer" question */ : Number(process.env.ARENA_METABASE_CARD_ID || 45739);
+const cardId = () => {
+  const v = variant.getStore();
+  if (v === "customer") return Number(process.env.ARENA_CUSTOMER_CARD_ID || 47455); // "Arena Club Customer"
+  if (v === "crop") return Number(process.env.ARENA_CROP_CARD_ID || 48181); // "crop"
+  return Number(process.env.ARENA_METABASE_CARD_ID || 45739);
+};
 async function mb(path: string, init: RequestInit = {}) {
   return fetch(`${config.metabaseHost()}${path}`, { ...init, headers: { "x-api-key": config.metabaseApiKey(), ...(init.headers || {}) } });
 }

@@ -590,3 +590,33 @@ export async function overrideSurface(session: AdminSession, cardId: string, s: 
   if (g.status && g.status !== "reviewer_override" && g.status !== "approved") throw new Error(`surface ${s.side}: admin saved it as "${g.status}"`);
   return g.id as string;
 }
+
+// ---------- Crop approve (captured from admin's Verify crop → Approve) ----------
+// PATCH /grades/crop/{scan grade id} (captured: Request URL + method) on the crop task's scan grade (kind front_scan / back_scan):
+//   { status:"approved", startedAt, finishedAt, verificationDuration, notes:[{kind:"secondary", name, note:"", status:"approved", userId, graderId, duration, createdAt}] }
+const CROP_PATH = "/grades/crop/{id}";
+export type CropNow = { taskId: string; side: string; gradeId: string; status: string };
+export async function cropsNow(session: AdminSession, cardId: string): Promise<CropNow[]> {
+  const j = await adminJson(session, `/grading_tasks?where=card_id=${cardId}`);
+  const tasks: any[] = Array.isArray(j?.data) ? j.data : Array.isArray(j) ? j : [];
+  const out: CropNow[] = [];
+  for (const t of tasks) {
+    if (t?.kind !== "crop") continue;
+    const gs: any[] = (Array.isArray(t.grades) ? t.grades : []).slice().sort((a: any, b: any) => String(b.createdAt).localeCompare(String(a.createdAt)));
+    const g = gs.find((x) => /_scan$/.test(String(x.kind))) ?? gs[0];
+    if (g?.id) out.push({ taskId: t.id, side: t.side ?? g.side ?? "", gradeId: g.id, status: g.status ?? "" });
+  }
+  return out.sort((a, b) => (a.side === "front" ? -1 : 1) - (b.side === "front" ? -1 : 1));
+}
+export async function approveCrop(session: AdminSession, c: CropNow, who: { userId: string; graderId: string; name: string }) {
+  const now = new Date().toISOString();
+  const body = { status: "approved", startedAt: now, finishedAt: now, verificationDuration: 0,
+    notes: [{ kind: "secondary", name: who.name, note: "", status: "approved", userId: who.userId, graderId: who.graderId, duration: 0, createdAt: now }] };
+  const r = await fetch(`${config.adminApiUrl()}${CROP_PATH.replace("{id}", c.gradeId)}`, { method: "PATCH", headers: headers(session.accessToken), body: JSON.stringify(body) });
+  const t = await r.text();
+  if (!r.ok) throw new Error(`crop ${c.side}: ${r.status} ${t.slice(0, 160)}`);
+  let j: any = null; try { j = JSON.parse(t); } catch { /* fine */ }
+  const st = (j?.grade ?? j)?.status;
+  if (st && st !== "approved") throw new Error(`crop ${c.side}: admin shows "${st}" after approve`);
+  return true;
+}
