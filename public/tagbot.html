@@ -358,6 +358,24 @@ html.photoblack #info .pic2 figcaption{color:var(--dim)!important}
 #info .pzwrap{justify-self:center;align-self:center;max-width:94vw;max-height:calc(100vh - 70px);background:#fff;padding:12px;box-sizing:border-box}
 html.photoblack #info .pzwrap{background:#0b0f0c}
 #info .pzwrap img{display:block;max-width:calc(94vw - 24px);max-height:calc(100vh - 94px);object-fit:contain}
+#info .fitnote{font-size:11px;text-align:center;line-height:1.35;min-height:15px}
+#info .fitnote.ok{color:#2e7d32}
+html.photoblack #info .fitnote.ok{color:var(--go)}
+#info .fitnote.bad{color:#fff;background:#d92d20;border-radius:6px;padding:3px 8px;font-weight:800}
+#info .fitnote.bad span{font-weight:500;opacity:.9}
+.slab .art .fitbadge.pc{left:auto;right:6px}
+/* green = whole card in frame · yellow = check edges · red = cut off (popup photos and tile photos) */
+.fr-ok{box-shadow:0 0 0 4px #22c55e!important;border-radius:8px}
+.fr-warn{box-shadow:0 0 0 4px #facc15!important;border-radius:8px}
+.fr-bad{box-shadow:0 0 0 4px #ef4444!important;border-radius:8px}
+.slab .art.fr-ok,.slab .art.fr-warn,.slab .art.fr-bad{box-shadow:none!important}
+.slab .art.fr-ok::after,.slab .art.fr-warn::after,.slab .art.fr-bad::after{content:"";position:absolute;inset:0;border:4px solid;pointer-events:none;z-index:1}
+.slab .art.fr-ok::after{border-color:#22c55e}.slab .art.fr-warn::after{border-color:#facc15}.slab .art.fr-bad::after{border-color:#ef4444}
+#info .pic2 figure a{margin:4px}
+.slab .art .fitbadge.pc.close{background:#ffd58a;color:#4a2a00}
+#info .fitnote.warn{color:#4a2a00;background:#ffe2a8;border-radius:6px;padding:3px 8px;font-weight:800}
+#info .fitnote.warn span{font-weight:500;opacity:.85}
+.slab .art .fitbadge{position:absolute;left:6px;bottom:6px;z-index:2;background:#d92d20;color:#fff;font-size:10px;font-weight:800;padding:2px 7px;border-radius:999px;box-shadow:0 1px 3px #0006}
 #info .isel{border-color:var(--line);color:var(--dim)}
 #info .isel.on{background:var(--go);border-color:var(--go);color:var(--go-ink,#04120a);font-weight:800}
 /* two-photo popup: wide enough for front + back next to the details, and always fits the window (no scrolling) */
@@ -1131,6 +1149,19 @@ async function demoApi(path,body){
     return {run_id:"demo_"+(++DEMO_RUN),status:dry?"dry_run_completed":"done",written_ids:ids,succeeded:ids.length,failed:0,skipped_no_longer_matching:0};
   }
   const demoMarks=()=>window.__DM=window.__DM||{"21783952":{ran_at:new Date(Date.now()-36e5).toISOString(),ran_by:"Alan Bailey",ran_cards:6},"21891654":{manual:true,manual_by:"Austin Crawford",manual_at:new Date().toISOString()}};
+  if(path==="photo-check"){ const out={}; for(const u of body.urls||[]){ out[u]=await new Promise(res=>{ const im=new Image(); im.onload=()=>{ const w=im.naturalWidth,h=im.naturalHeight,c=document.createElement("canvas"); c.width=w; c.height=h; const x=c.getContext("2d"); x.drawImage(im,0,0); const D=x.getImageData(0,0,w,h).data, px=(a,b)=>{const i=(b*w+a)*4; return [D[i],D[i+1],D[i+2]];};
+      const samp=(f,hz)=>{ const o=[]; for(let k=0;k<60;k++){ const t=Math.round((hz?w:h)*(0.2+0.6*k/59)); o.push(hz?px(t,f):px(f,t)); } return o; }, near=(p,c)=>Math.abs(p[0]-c[0])+Math.abs(p[1]-c[1])+Math.abs(p[2]-c[2])<70;
+      const ec=(f,hz)=>{ const e=samp(f,hz), c=[0,1,2].map(k=>e.reduce((a,p)=>a+p[k],0)/e.length); return e.filter(p=>near(p,c)).length/60>=0.9?c:null; };
+      const cols={top:ec(0,true),bottom:ec(h-1,true),left:ec(0,false),right:ec(w-1,false)}, bd=c=>Math.min(c[0]+c[1]+c[2],765-c[0]-c[1]-c[2]);
+      const side=(k,f,st,mx,hz)=>{ const c=cols[k]; if(!c||bd(c)>=90) return 0; let i=0; while(i<mx&&samp(f+i*st,hz).filter(p=>near(p,c)).length/60>=0.9) i++; return i; };
+      const m={top:side("top",0,1,h*.45|0,true)/h,bottom:side("bottom",h-1,-1,h*.45|0,true)/h,left:side("left",0,1,w*.45|0,false)/w,right:side("right",w-1,-1,w*.45|0,false)/w}, issues=[];
+      const touch=Object.keys(m).filter(k=>m[k]<0.004), opp={top:"bottom",bottom:"top",left:"right",right:"left"}, cut=touch.filter(k=>m[opp[k]]>0.03), edge=touch.filter(k=>!cut.includes(k));
+      if(cut.length) issues.push(`card is cut off on the ${cut.join(" / ")} (shifted in the photo)`); if(edge.length) issues.push(`card runs into the ${edge.join(" / ")} edge (may be cut off)`);
+      if(Math.abs(m.top-m.bottom)>0.05||Math.abs(m.left-m.right)>0.05) issues.push("card is off-centre in the photo");
+      let level=issues.length?"cut":"ok";
+      if(level==="ok"){ const thin=Object.keys(m).filter(k=>m[k]<0.008); if(thin.length) issues.push(`very little space on the ${thin.join(" / ")}: check the edges`);
+        if(Math.abs(m.top-m.bottom)>0.025||Math.abs(m.left-m.right)>0.025) issues.push("slightly off-centre"); if(issues.length) level="close"; }
+      res({url:u,w,h,margins:m,issues,level,ok:level==="ok"}); }; im.onerror=()=>res({url:u,ok:true,issues:[],error:"unreadable"}); im.src=u; }); } return out; }
   if(path==="crop-mark"){ demoMarks(); for(const o of body.orders||[]){ const m=__DM[o.order]=__DM[o.order]||{};
       if(body.kind==="ran"){ m.ran_at=new Date().toISOString(); m.ran_by="Demo user"; m.ran_cards=(m.ran_cards||0)+(o.cards||0); } else { m.manual=body.on!==false; m.manual_by="Demo user"; m.manual_at=new Date().toISOString(); } }
     return Object.fromEntries((body.orders||[]).map(o=>[o.order,__DM[o.order]])); }
@@ -1217,7 +1248,8 @@ async function find(text){
   recompute(true);
   if(ARCHK(S.kind)&&res.card_id){ const b=document.querySelector("#source b"); if(b) b.textContent=`${res.view_label||VIEWS[S.view]} · ${DEMO?"Demo":"Live"} · Metabase ${res.card_id}, fresh every search`; }
   if(S.kind==="arena"){ S.av=ARENA_V; }
-  const wantQ=ARENA_V==="customer"?47455:ARENA_V==="crop"?48181:45739; if(DEMO&&res.card_id) res.card_id=wantQ; // demo data stands in for every Arena question
+  const wantQ=ARENA_V==="customer"?47455:ARENA_V==="crop"?48181:45739;
+  if(ARENA_V==="crop") setTimeout(()=>S&&photoChecks(S.matched),0); if(DEMO&&res.card_id) res.card_id=wantQ; // demo data stands in for every Arena question
   if(S.kind==="arena"&&res.card_id){ const b=document.querySelector("#source b"); if(b) b.textContent=`${DEMO?"Demo":"Live"} · Metabase ${res.card_id}${res.check_card_id?` + Overall Check ${res.check_card_id}`:""}, fresh every search`;
     if(Number(res.card_id)!==wantQ) $("#srcMsg").insertAdjacentHTML("afterbegin",`<div class="warn-txt small">Arena Club is reading question ${esc(String(res.card_id))}, not 45739 — ARENA_METABASE_CARD_ID is set in Vercel. Delete it (or set it to 45739) and redeploy.</div>`); }
   if(S.kind==="arena") refreshLive();
@@ -1969,7 +2001,7 @@ function tile(r){
   return arenaTile(r,`<div class="tw"><button type="button" class="infob" data-info="${esc(r.item_id)}" aria-label="Details for ${esc(r.player_name)}" title="Details">i</button><button type="button" class="tile${r.overall_check==="pass"?" chk-ok":r.overall_check==="fail"?" chk-bad":""}${r.kind==="arena"&&isLow(r)?" low75":""}" data-id="${r.item_id}" aria-pressed="${on}" ${S.phase!=="review"?"disabled":""} aria-label="${esc(r.player_name)} ${esc(r.set_name)}">
     <span class="check" aria-hidden="true">${on?"✓":""}</span>
     <div class="slab"><div class="lbl"><span>${esc((r.grade||(r.ac?"8AC "+r.ac:"")).toUpperCase())}</span><span>${r.parallel_total?"/"+esc(r.parallel_total):""}</span></div>
-      <div class="art" style="background:linear-gradient(150deg,hsl(${h} 55% 38%),hsl(${(h+40)%360} 60% 22%))">${esc(initials)}${r.img?`<img src="${esc(r.img)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()">`:""}</div></div>
+      <div class="art${r.photo_checked?(r.photo_level==="cut"?" fr-bad":r.photo_level==="close"?" fr-warn":" fr-ok"):""}" style="background:linear-gradient(150deg,hsl(${h} 55% 38%),hsl(${(h+40)%360} 60% 22%))">${esc(initials)}${r.img?`<img src="${esc(r.img)}" alt="" loading="lazy" referrerpolicy="no-referrer" onload="tileFit(this,'${esc(r.item_id)}')" onerror="this.remove()">`:""}${r.photo_issue?`<span class="fitbadge pc${r.photo_level==="close"?" close":""}" title="${esc(r.photo_issue)}">${r.photo_level==="close"?"⚠ check edges":"⚠ card cut off?"}</span>`:""}</div></div>
     <div class="name">${esc(r.player_name)}</div>
     ${r.kind==="archived"?archInfo(r):r.kind==="arena"?arenaInfo(r):`<div class="meta">${esc(r.set_name)}${r.insert?" · "+esc(r.insert):""}${r.parallel_name?"<br>"+esc(r.parallel_name):""}</div>
     <div class="row"><span class="dim">${r.kind==="watch"?(r.serial?"Serial "+esc(r.serial):""):"AC "+esc(r.ac)}</span><span class="ev">${money(r.ev)}</span></div>
@@ -2147,6 +2179,32 @@ function clearWatchPhotos(root){
     CLEAR_CACHE.set(src,job); job.then(done);
   });
 }
+const CARD_RATIO=2.5/3.5, RATIO_TOL=0.04;
+function photoFit(w,h){ if(!w||!h) return null; const r=w/h, off=Math.abs(r-CARD_RATIO)/CARD_RATIO;
+  return {w,h,r,ok:off<=RATIO_TOL,why:w>h?"sideways (wider than tall)":r>CARD_RATIO?"too wide for its height: top or bottom cut off":"too tall for its width: a side cut off",in:`${(w/300).toFixed(2)} × ${(h/300).toFixed(2)} in at 300 DPI`}; }
+// popup photos: size under each, red flag when it isn't card-shaped
+function fitNote(img){ const f=photoFit(img.naturalWidth,img.naturalHeight), cap=img.closest("figure")&&img.closest("figure").querySelector(".fitnote"); if(!f||!cap) return;
+  const pc=PCHK[img.getAttribute("src")], m=pc&&pc.margins, mtxt=m?`space around the card: top ${(m.top*100).toFixed(1)}% · bottom ${(m.bottom*100).toFixed(1)}% · left ${(m.left*100).toFixed(1)}% · right ${(m.right*100).toFixed(1)}%`:"";
+  const issues=[...(f.ok?[]:[`not 2.5 × 3.5: ${f.why}`]),...(pc&&!pc.ok?pc.issues:[])];
+  const closeOnly=f.ok&&pc&&pc.level==="close";
+  cap.className="fitnote "+(issues.length?(closeOnly?"warn":"bad"):"ok");
+  const fr=img.closest("a")||img; fr.classList.remove("fr-ok","fr-warn","fr-bad"); fr.classList.add(issues.length?(closeOnly?"fr-warn":"fr-bad"):(pc?"fr-ok":"fr-ok")); // frame colour = result
+  cap.innerHTML=issues.length?`⚠ ${issues.map(esc).join("<br>⚠ ")}<br><span>${f.w} × ${f.h} px · ${f.in}${mtxt?`<br>${mtxt}`:""}</span>`:`${f.w} × ${f.h} px · ${f.in} · fits 2.5 × 3.5 ✓${pc?" · whole card in frame ✓":""}`; }
+// tiles: a ⚠ badge on the photo when it isn't card-shaped
+function tileFit(img,id){ const f=photoFit(img.naturalWidth,img.naturalHeight); const c=(S&&S.matched||[]).find(x=>x.item_id===id); if(!f) return;
+  if(c) c.photo_fit=f; const art=img.closest(".art"); if(!art) return; art.querySelectorAll(".fitbadge:not(.pc)").forEach(x=>x.remove());
+  if(!f.ok){ const b=document.createElement("span"); b.className="fitbadge"; b.title=`Photo isn't 2.5 × 3.5 (${f.w}×${f.h} px, ratio ${f.r.toFixed(3)}): ${f.why}`; b.textContent="⚠ not 2.5×3.5"; art.appendChild(b); } }
+// whole-card check (server measures the space on each side of the photo): flags cards that run into the edge or sit off-centre
+const PCHK={};
+async function photoChecks(rows){
+  const urls=[...new Set(rows.flatMap(r=>[r.img_front,r.img_back]).filter(u=>u&&!(u in PCHK)))];
+  for(let i=0;i<urls.length;i+=40){ try{ Object.assign(PCHK,await api("photo-check",{urls:urls.slice(i,i+40)})); }catch{ break; } }
+  for(const r of rows){ const ck=[["Front",r.img_front],["Back",r.img_back]].map(([s,u])=>[s,u&&PCHK[u]]).filter(([,c])=>c&&!c.ok);
+    r.photo_issue=ck.map(([s,c])=>`${s}: ${c.issues.join("; ")}`).join(" · ")||null;
+    r.photo_level=ck.some(([,c])=>(c.level||"cut")==="cut")?"cut":ck.length?"close":null;
+    r.photo_checked=[r.img_front,r.img_back].some(u=>u&&PCHK[u]); }
+  render(); const d=$("#info"); if(d&&d.open) d.querySelectorAll("#info .pic2 img").forEach(fitNote);
+}
 // hover magnifier: the photo zooms in around the pointer (2.4×) and follows it; back to normal when the pointer leaves
 function hoverZoom(box){ if(!box) return; const img=box.querySelector("img"); if(!img) return; box.classList.add("hz");
   box.onmousemove=e=>{ const b=box.getBoundingClientRect(); img.style.transformOrigin=`${((e.clientX-b.left)/b.width*100).toFixed(1)}% ${((e.clientY-b.top)/b.height*100).toFixed(1)}%`; img.style.transform="scale(2.4)"; };
@@ -2161,7 +2219,7 @@ function showInfo(id){
   // Prev / Next walk the cards in the order they're shown on screen
   const list=(S.rows&&S.rows.length?S.rows:S.matched).filter(c=>c.kind===r.kind), pos=Math.max(0,list.findIndex(c=>c.item_id===r.item_id));
   d.innerHTML=`<div class="in">
-    ${(r.img_front||r.img_back)?`<div class="pic pic2">${[["Front",r.img_front||r.img],["Back",r.img_back]].map(([lab,u])=>`<figure><figcaption class="dim small">${lab}</figcaption>${u?`<a href="${esc(u)}" target="_blank" rel="noopener" title="Open full size"><img src="${esc(u)}" alt="${lab} of the card" referrerpolicy="no-referrer" onerror="this.replaceWith(Object.assign(document.createElement('span'),{className:'dim small',textContent:'Photo unavailable'}))"></a>`:`<span class="dim small">No ${lab.toLowerCase()} photo</span>`}</figure>`).join("")}</div>`
+    ${(r.img_front||r.img_back)?`<div class="pic pic2">${[["Front",r.img_front||r.img],["Back",r.img_back]].map(([lab,u])=>`<figure><figcaption class="dim small">${lab}</figcaption>${u?`<a href="${esc(u)}" target="_blank" rel="noopener" title="Open full size"><img src="${esc(u)}" alt="${lab} of the card" referrerpolicy="no-referrer" onload="fitNote(this)" onerror="this.replaceWith(Object.assign(document.createElement('span'),{className:'dim small',textContent:'Photo unavailable'}))"></a><div class="fitnote"></div>`:`<span class="dim small">No ${lab.toLowerCase()} photo</span>`}</figure>`).join("")}</div>`
       :`<div class="pic">${r.img?`<img src="${esc(r.img)}" alt="Slab photo" referrerpolicy="no-referrer" onerror="this.replaceWith(Object.assign(document.createElement('span'),{className:'dim small',textContent:'Photo unavailable'}))">`:`<span class="dim small">No photo</span>`}</div>`}
     <div>
       <h2>${esc(r.player_name)}</h2>

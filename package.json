@@ -11,6 +11,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.26.0",
     "@neondatabase/serverless": "^1.1.0",
+    "jpeg-js": "^0.4.4",
     "mcp-handler": "1.1.0",
     "next": "15.5.26",
     "react": "19.1.0",

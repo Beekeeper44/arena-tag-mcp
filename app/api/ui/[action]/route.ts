@@ -1,3 +1,4 @@
+import { checkPhotos } from "@/lib/photo";
 // JSON API for the Tag Bot screen. Everything except login needs the signed-in cookie.
 import { config } from "@/lib/config";
 import { searchArchived } from "@/lib/archived";
@@ -199,6 +200,8 @@ export async function POST(req: Request, ctx: Ctx) {
         try { marks = await cropMarks(r.orders.map((o) => o.order)); } catch { /* marks are extra */ }
         return json({ ...r, marks });
       }
+      case "photo-check": // is the whole card in each photo (margins on all four sides)?
+        return json(await checkPhotos(Array.isArray(body.urls) ? (body.urls as string[]) : []));
       case "crop-mark":
         return forbid(u, "member") ?? json(await setCropMark({ orders: Array.isArray(body.orders) ? (body.orders as { order: string; cards?: number }[]) : [], kind: body.kind === "ran" ? "ran" : "manual", on: body.on !== false, user: u.name }));
       case "crop-approve":
