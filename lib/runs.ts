@@ -777,17 +777,24 @@ export async function runCropApprove(input: { text: string; item_ids: string[]; 
     [id, JSON.stringify({ text: input.text, source: "crop", crop: "approve" }), input.user, ids.length, dry, hoursFromNow(1)]
   );
   const session = await openAdminSession(input.as_admin_user_id);
-  const cards: { item_id: string; sides: string[]; error?: string }[] = [];
+  const cards: { item_id: string; sides: string[]; already: string[]; error?: string }[] = [];
   try {
     const userId = input.as_admin_user_id || config.sessionUserId();
     const graderId = await graderIdFor(session, userId);
     const who = { userId, graderId, name: input.user };
     await Promise.all(ids.map(async (item_id) => {
-      const row = { item_id, sides: [] as string[], error: undefined as string | undefined };
+      const row = { item_id, sides: [] as string[], already: [] as string[], error: undefined as string | undefined };
       try {
+        // front AND back: each crop task that isn't approved yet gets approved; ones already approved are left alone
         const crops = await cropsNow(session, item_id);
         if (!crops.length) throw new Error("no crop task on this card");
-        for (const c of crops) { if (!dry) await approveCrop(session, c, who); row.sides.push(c.side); }
+        const missing = ["front", "back"].filter((s) => !crops.some((c) => c.side === s));
+        for (const c of crops) {
+          if (c.status === "approved" && (c.taskStatus === "approved" || !c.taskStatus)) { row.already.push(c.side); continue; }
+          if (!dry) await approveCrop(session, c, who);
+          row.sides.push(c.side);
+        }
+        if (missing.length) row.error = `no ${missing.join(" / ")} crop task in admin (approved: ${row.sides.join(", ") || "none"})`;
       } catch (e) { row.error = e instanceof Error ? e.message : String(e); }
       cards.push(row);
     }));

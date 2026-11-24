@@ -431,7 +431,7 @@ export async function liveCards(session: AdminSession, ids: string[]) {
       const raw = await r.json();
       const c: Record<string, any> = raw && raw.card ? raw.card : raw;
       const pick: Record<string, unknown> = {};
-      for (const k of ["overall", "centering", "corners", "edges", "surface", "frontSlabPictureUrl", "frontLabelPictureUrl", "backLabelPictureUrl", "status", "authenticationStatus"])
+      for (const k of ["overall", "centering", "corners", "edges", "surface", "frontSlabPictureUrl", "frontLabelPictureUrl", "backLabelPictureUrl", "status", "authenticationStatus", "playerName", "labelPlayerName", "setName", "labelSetName", "setNumber", "insert", "frontPictureUrl"])
         if (c[k] !== undefined) pick[k] = c[k];
       // the card's tag: admin writes it as "tag"; read it back however the card record carries it (no tag = null)
       const tagName = (t: any) => (typeof t === "string" ? t : t?.name ?? t?.tag ?? null);
@@ -595,7 +595,7 @@ export async function overrideSurface(session: AdminSession, cardId: string, s: 
 // PATCH /grades/crop/{scan grade id} (captured: Request URL + method) on the crop task's scan grade (kind front_scan / back_scan):
 //   { status:"approved", startedAt, finishedAt, verificationDuration, notes:[{kind:"secondary", name, note:"", status:"approved", userId, graderId, duration, createdAt}] }
 const CROP_PATH = "/grades/crop/{id}";
-export type CropNow = { taskId: string; side: string; gradeId: string; status: string };
+export type CropNow = { taskId: string; side: string; gradeId: string; status: string; taskStatus: string };
 export async function cropsNow(session: AdminSession, cardId: string): Promise<CropNow[]> {
   const j = await adminJson(session, `/grading_tasks?where=card_id=${cardId}`);
   const tasks: any[] = Array.isArray(j?.data) ? j.data : Array.isArray(j) ? j : [];
@@ -604,7 +604,7 @@ export async function cropsNow(session: AdminSession, cardId: string): Promise<C
     if (t?.kind !== "crop") continue;
     const gs: any[] = (Array.isArray(t.grades) ? t.grades : []).slice().sort((a: any, b: any) => String(b.createdAt).localeCompare(String(a.createdAt)));
     const g = gs.find((x) => /_scan$/.test(String(x.kind))) ?? gs[0];
-    if (g?.id) out.push({ taskId: t.id, side: t.side ?? g.side ?? "", gradeId: g.id, status: g.status ?? "" });
+    if (g?.id) out.push({ taskId: t.id, side: t.side ?? g.side ?? "", gradeId: g.id, status: g.status ?? "", taskStatus: t.status ?? "" });
   }
   return out.sort((a, b) => (a.side === "front" ? -1 : 1) - (b.side === "front" ? -1 : 1));
 }

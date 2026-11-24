@@ -88,7 +88,9 @@ function idColumn(rows: Record<string, unknown>[]) {
     for (const r of rows.slice(0, 200)) if (UUID.test(String(r[key] ?? ""))) full++;
     if (!full) continue;
     const name = K(key);
-    const score = full + (/ITEM/.test(name) ? 0.6 : 0) + (/(^|_)ID$|UUID/.test(name) ? 0.4 : 0) - (/USER|OWNER|CUSTOMER|ORDER|SELLER|BUYER|BATCH|TASK/.test(name) ? 5 : 0);
+    // the card's own id: item/card columns win; ids of people (grader, verifier, user) and pictures never count
+    const score = full + (/ITEM|CARD/.test(name) ? 0.8 : 0) + (/(^|_)ID$|UUID/.test(name) ? 0.4 : 0)
+      - (/USER|OWNER|CUSTOMER|ORDER|SELLER|BUYER|BATCH|TASK|GRADER|VERIFIER|SCANNER|REVIEWER|PICTURE|IMAGE|PHOTO|SCAN|LABEL|SLAB/.test(name) ? 5 : 0);
     if (!best || score > best.score) best = { key, score };
   }
   return best && best.score > 0 ? best.key : null;
@@ -131,7 +133,9 @@ function toCheck(o0: Record<string, unknown>): CheckRow {
 function toCard(o0: Record<string, unknown>, idKey: string | null, i: number, orderFallback: string): ArenaCard {
   const o: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(o0)) o[K(k)] = v;
-  const id = idKey ? String(o0[idKey] ?? "").match(UUID)?.[0]?.toLowerCase() : null;
+  // the id column may be a plain id or a link (CARD_URL …/orders/<order id>/cards/<card id>): take the id after /cards/, else the last one
+  const idRaw = idKey ? String(o0[idKey] ?? "") : "";
+  const id = (idRaw.match(new RegExp("/cards/(" + UUID.source + ")", "i"))?.[1] ?? idRaw.match(new RegExp(UUID.source, "gi"))?.pop() ?? null)?.toLowerCase() ?? null;
   const gc = s(col(o, ["GRADING_COMPANY", "GRADER"]));
   const grade = s(col(o, ["GRADE", "OVERALL_GRADE", "FINAL_GRADE"]));
   const img = Object.keys(o).find((k) => /PICTURE|IMAGE|PHOTO|IMG/.test(k) && /^https?:\/\//.test(String(o[k] ?? "")));
@@ -165,7 +169,7 @@ function toCard(o0: Record<string, unknown>, idKey: string | null, i: number, or
     order_number: order,
     order_url: orderUrl ?? (process.env.ARENA_ORDER_URL ? process.env.ARENA_ORDER_URL.replace("{order}", order) : null),
     po_number: s(col(o, ["PO_NUMBER", "PO"])),
-    status: s(col(o, ["ITEM_STATUS", "STATUS"])),
+    status: s(col(o, ["ITEM_STATUS", "CARD_STATUS", "STATUS"])),
     ev_age_days: n(col(o, ["EV_AGE_DAYS"])),
     ev_date: s(col(o, ["ESTIMATED_VALUE_DATE", "EV_DATE"])),
     times_sold_back: n(col(o, ["TIMES_SOLD_BACK"])),

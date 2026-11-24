@@ -1054,7 +1054,7 @@ async function demoApi(path,body){
     const list=DEMO_DB[body.view]||[]; if(!dry&&ARCHK(body.kind)) for(const c of list) if(ids.includes(c.item_id)) c.tag=body.action==="clear"?null:body.tag;
     return {run_id:"demo_"+(++DEMO_RUN),status:dry?"dry_run_completed":"done",written_ids:ids,succeeded:ids.length,failed:0,skipped_no_longer_matching:0};
   }
-  if(path==="crop-approve") return {run_id:"demo",dry_run:!!body.dry_run,succeeded:(body.item_ids||[]).length,failed:0,cards:(body.item_ids||[]).map(id=>({item_id:id,sides:["front","back"]}))};
+  if(path==="crop-approve") return {run_id:"demo",dry_run:!!body.dry_run,succeeded:(body.item_ids||[]).length,failed:0,cards:(body.item_ids||[]).map((id,i)=>i%3===1?{item_id:id,sides:["front"],already:["back"]}:{item_id:id,sides:["front","back"],already:[]})};
   if(path==="status"){
     const k=body.key, a={not_accepted:["auth_status","not_accepted"],pending_rescan:["rescan_at","pending_rescan"],archive:["archived_at","archived"]}[k]; if(!a) throw new Error("Unknown status action.");
     if(k==="archive"&&body.op==="apply"&&!body.confirm_emailed) throw new Error("Confirm the customer has been emailed before archiving.");
@@ -1299,7 +1299,8 @@ async function gApply(){
   // crop first: it's the first step of grading
   if(cropOn()) await run("crop",async part=>{ try{
       const r=await api("crop-approve",{text:S.text,item_ids:part,dry_run:dry}), bad=(r.cards||[]).filter(c=>c.error);
-      details.push(`Approve crop · ${part.length}: ${part.length-bad.length} approved <span class="dim">· run ${esc(r.run_id||"")}</span>`);
+      const cs=r.cards||[], side=x=>x.length?x.join(" + "):"—";
+      details.push(`Approve crop · ${part.length} card${part.length===1?"":"s"} <span class="dim">· run ${esc(r.run_id||"")}</span>`+cs.map(c=>`<br>&nbsp; ${esc(acOf(c.item_id))}: approved <b>${side(c.sides||[])}</b>${(c.already||[]).length?` · already approved ${esc(side(c.already))}`:""}`).join(""));
       return {ok:part.filter(id=>!bad.some(c=>c.item_id===id)),fail:bad.map(c=>({id:c.item_id,error:c.error}))};
     }catch(e){ return failAll(part,e); } });
   if(corners) await run("c",async part=>{ try{
@@ -1692,6 +1693,10 @@ async function refreshArchived(){
     if(d.boxLabel!==undefined) r.in_box=d.boxLabel||null;
     if(d.status!==undefined) r.status=d.status;
     if(d.authenticationStatus!==undefined) r.auth_status=d.authenticationStatus;
+    if((!r.player_name||r.player_name==="(no player)")&&(d.labelPlayerName||d.playerName)) r.player_name=d.labelPlayerName||d.playerName; // questions without names (48181)
+    if(!r.set_name&&(d.labelSetName||d.setName)) r.set_name=[d.labelSetName||d.setName,d.insert].filter(Boolean).join(" · ");
+    if(!r.set_number&&d.setNumber) r.set_number=d.setNumber;
+    if(!r.img&&(d.frontSlabPictureUrl||d.frontPictureUrl)) r.img=d.frontSlabPictureUrl||d.frontPictureUrl;
     if(d.tag!==undefined) r.tag=d.tag||null;
     if(!r.img&&d.frontSlabPictureUrl) r.img=d.frontSlabPictureUrl;
     if(JSON.stringify([r.status,r.auth_status,r.tag,r.img,r.archived_at,r.rescan_at])!==before) changed++;
@@ -1717,6 +1722,10 @@ async function refreshLive(){
     if(d.boxLabel!==undefined) r.in_box=d.boxLabel||null;
     if(d.status!==undefined) r.status=d.status;
     if(d.authenticationStatus!==undefined) r.auth_status=d.authenticationStatus;
+    if((!r.player_name||r.player_name==="(no player)")&&(d.labelPlayerName||d.playerName)) r.player_name=d.labelPlayerName||d.playerName; // questions without names (48181)
+    if(!r.set_name&&(d.labelSetName||d.setName)) r.set_name=[d.labelSetName||d.setName,d.insert].filter(Boolean).join(" · ");
+    if(!r.set_number&&d.setNumber) r.set_number=d.setNumber;
+    if(!r.img&&(d.frontSlabPictureUrl||d.frontPictureUrl)) r.img=d.frontSlabPictureUrl||d.frontPictureUrl;
     const o=num(d.overall), gc=r.grading_company||"arena_club";
     if(o!==null){
       if(o===0){ r.authentic=true; r.grade_num=0; r.check_overall=0; r.overall_check="pass"; r.grade=gc+" authentic"; for(const k of ["centering","corners","edges","surface"]) if(num(d[k])!==null) r[k]=num(d[k]); auth++; }
