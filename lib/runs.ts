@@ -765,7 +765,7 @@ export async function runCornersNone(input: { text: string; item_ids: string[]; 
 
 
 // ---------- Crop tile: approve the front + back crop tasks on the selected cards (under the TAG-BOT user's name) ----------
-export async function runCropApprove(input: { text: string; item_ids: string[]; dry_run?: boolean; user: string; as_admin_user_id?: string }) {
+export async function runCropApprove(input: { text: string; item_ids: string[]; dry_run?: boolean; user: string; as_admin_user_id?: string; sides?: Record<string, string[]> }) {
   const ids = [...new Set((input.item_ids || []).filter((x) => /^[0-9a-f-]{36}$/i.test(String(x))))];
   if (!ids.length) throw new Error("Select the cards first.");
   if (ids.length > config.maxArchivePerRun()) throw new Error(`${ids.length} cards is over the ${config.maxArchivePerRun()}-card limit.`);
@@ -789,12 +789,14 @@ export async function runCropApprove(input: { text: string; item_ids: string[]; 
         const crops = await cropsNow(session, item_id);
         if (!crops.length) throw new Error("no crop task on this card");
         const missing = ["front", "back"].filter((s) => !crops.some((c) => c.side === s));
+        const want = input.sides?.[item_id]; // only these sides, when picked in the card popup (V front / M back)
         for (const c of crops) {
+          if (want && !want.includes(c.side)) continue;
           if (c.status === "approved" && (c.taskStatus === "approved" || !c.taskStatus)) { row.already.push(c.side); continue; }
           if (!dry) await approveCrop(session, c, who);
           row.sides.push(c.side);
         }
-        if (missing.length) row.error = `no ${missing.join(" / ")} crop task in admin (approved: ${row.sides.join(", ") || "none"})`;
+        if (missing.length && !want) row.error = `no ${missing.join(" / ")} crop task in admin (approved: ${row.sides.join(", ") || "none"})`;
       } catch (e) { row.error = e instanceof Error ? e.message : String(e); }
       cards.push(row);
     }));
@@ -823,4 +825,27 @@ export async function setCropMark(input: { orders: { order: string; cards?: numb
                ON CONFLICT (order_number) DO UPDATE SET manual=$2, manual_by=$3, manual_at=now()`, [o.order, input.on !== false, input.user]);
   }
   return cropMarks(list.map((o) => o.order));
+}
+
+
+// ---------- Crop tile: which cards already have their crop approved (read from admin, so it's true whoever approved it) ----------
+export async function cropStatus(input: { item_ids: string[]; as_admin_user_id?: string }) {
+  const ids = [...new Set((input.item_ids || []).filter((x) => /^[0-9a-f-]{36}$/i.test(String(x))))].slice(0, 200);
+  const session = await openAdminSession(input.as_admin_user_id);
+  const out: Record<string, { front?: string; back?: string; done: boolean; error?: string }> = {};
+  try {
+    let i = 0;
+    await Promise.all(Array.from({ length: 8 }, async () => {
+      while (i < ids.length) {
+        const id = ids[i++];
+        try {
+          const crops = await cropsNow(session, id), row: { front?: string; back?: string; done: boolean } = { done: false };
+          for (const c of crops) { const ok = c.status === "approved" && (c.taskStatus === "approved" || !c.taskStatus); (row as any)[c.side || "front"] = ok ? "approved" : c.status || "queued"; }
+          row.done = crops.length > 0 && crops.every((c) => c.status === "approved" && (c.taskStatus === "approved" || !c.taskStatus));
+          out[id] = row;
+        } catch (e) { out[id] = { done: false, error: e instanceof Error ? e.message : String(e) }; }
+      }
+    }));
+  } finally { await session.revoke(); }
+  return out;
 }

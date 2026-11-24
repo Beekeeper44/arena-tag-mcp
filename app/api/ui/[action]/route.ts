@@ -4,7 +4,7 @@ import { config } from "@/lib/config";
 import { searchArchived } from "@/lib/archived";
 import { runArchivedStatus, undoArchivedStatus } from "@/lib/archived-status";
 import { type CardFilters, type PostFilters } from "@/lib/metabase";
-import { runSelection, runWatchSelection, runArenaSelection, runArchivedSelection, runOverallUpdate, runGradeUpdate, runCornersNone, undoRun, listRuns, runCropApprove, cropMarks, setCropMark } from "@/lib/runs";
+import { runSelection, runWatchSelection, runArenaSelection, runArchivedSelection, runOverallUpdate, runGradeUpdate, runCornersNone, undoRun, listRuns, runCropApprove, cropMarks, setCropMark, cropStatus } from "@/lib/runs";
 import { searchArena, useArenaVariant, listArenaOrders } from "@/lib/arena";
 import { openAdminSession, liveCards, liveWatches } from "@/lib/admin";
 import { listPrompts, addPrompt, renamePrompt, deletePrompt } from "@/lib/ui";
@@ -202,10 +202,12 @@ export async function POST(req: Request, ctx: Ctx) {
       }
       case "photo-check": // is the whole card in each photo (margins on all four sides)?
         return json(await checkPhotos(Array.isArray(body.urls) ? (body.urls as string[]) : []));
+      case "crop-status": // front / back crop approved? per card, from admin
+        return json(await cropStatus({ item_ids: Array.isArray(body.item_ids) ? (body.item_ids as string[]) : [], as_admin_user_id: adminLoginFor(u) }));
       case "crop-mark":
         return forbid(u, "member") ?? json(await setCropMark({ orders: Array.isArray(body.orders) ? (body.orders as { order: string; cards?: number }[]) : [], kind: body.kind === "ran" ? "ran" : "manual", on: body.on !== false, user: u.name }));
       case "crop-approve":
-        return forbid(u, "member") ?? json(await runCropApprove({ text: str("text"), item_ids: Array.isArray(body.item_ids) ? (body.item_ids as string[]) : [], dry_run: body.dry_run === true, user: u.name, as_admin_user_id: adminLoginFor(u) }));
+        return forbid(u, "member") ?? json(await runCropApprove({ text: str("text"), item_ids: Array.isArray(body.item_ids) ? (body.item_ids as string[]) : [], dry_run: body.dry_run === true, user: u.name, as_admin_user_id: adminLoginFor(u), sides: body.sides && typeof body.sides === "object" ? (body.sides as Record<string, string[]>) : undefined }));
       case "live": {
         // current grades straight from admin for the cards on screen (Metabase lags behind)
         const ids = (Array.isArray(body.ids) ? (body.ids as string[]) : []).slice(0, 2000);

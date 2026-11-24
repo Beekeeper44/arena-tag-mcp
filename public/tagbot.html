@@ -434,6 +434,15 @@ html.photoblack #info .fitnote .pdet{color:var(--dim)}
 .themesw.on i{background:#111;box-shadow:inset 0 0 0 1px var(--off)}
 .themesw.on i::after{left:19px;background:#fff}
 .themesw:focus-visible{outline:2px solid var(--go);outline-offset:3px;border-radius:6px}
+.ast.cropok{color:#22c55e!important;border-color:#22c55e!important}
+.ast.croppart{color:#facc15!important;border-color:#facc15!important}
+.ast.croppick{color:#38bdf8!important;border-color:#38bdf8!important}
+#info .sidepick{margin-top:4px;font:inherit;font-size:12px;font-weight:800;padding:4px 10px;border-radius:999px;border:1.5px solid #9ca3af;background:#fff;color:#555;cursor:pointer}
+#info .sidepick.on{border-color:#16a34a;background:#16a34a;color:#fff}
+#info .sidepick kbd{font:inherit;font-size:10px;opacity:.75;border:1px solid currentColor;border-radius:4px;padding:0 4px;margin-left:4px}
+html.photoblack #info .sidepick{background:#111;color:#bbb}
+html.photoblack #info .sidepick.on{background:#16a34a;color:#fff}
+.ast.croptodo{color:var(--dim)!important;border-color:var(--line)!important}
 .pok{font-size:12px;max-height:120px;overflow:auto;border:1px solid color-mix(in srgb,var(--go) 45%,transparent);border-radius:8px;padding:6px 8px;color:var(--text)}
 .pok>b{color:var(--go)}
 .pok .pf{display:inline-block;margin:3px 6px 0 0;padding:1px 8px;border-radius:999px;border:1px solid var(--line);white-space:nowrap}
@@ -1165,7 +1174,8 @@ async function demoApi(path,body){
     return Object.fromEntries((body.orders||[]).map(o=>[o.order,__DM[o.order]])); }
   if(path==="arena-orders"){ const d=n=>new Date(Date.now()+n*864e5).toISOString().slice(0,10);
     demoMarks();
-    return {card_id:48181,has_due:true,cards:41,marks:{...__DM},orders:[["21783952",-2,6],["21891654",0,7],["23117068",1,2],["23117070",2,4],["23331360",3,5],["21828064",5,9],["23440012",8,3],["23450981",12,5]].map(([o,dd,c])=>({order:o,due:d(dd),cards:c,statuses:{pending_grading:c}}))}; }
+    return {card_id:48181,has_due:true,cards:41,marks:{...__DM},orders:[["21783952",-2,6],["21891654",0,7],["23117068",1,2],["23117070",2,4],["23331360",3,5],["21828064",5,9],["23440012",8,3],["23450981",12,5]].map(([o,dd,c],i)=>({order:o,due:d(dd),cards:c,customer:i%3?"Arena Club":"Collector Co",statuses:{pending_grading:c}}))}; }
+  if(path==="crop-status") return Object.fromEntries((body.item_ids||[]).map((id,i)=>[id,i%3===0?{front:"approved",back:"approved",done:true}:i%3===1?{front:"approved",back:"queued",done:false}:{front:"queued",back:"queued",done:false}]));
   if(path==="crop-approve") return {run_id:"demo",dry_run:!!body.dry_run,succeeded:(body.item_ids||[]).length,failed:0,cards:(body.item_ids||[]).map((id,i)=>i%3===1?{item_id:id,sides:["front"],already:["back"]}:{item_id:id,sides:["front","back"],already:[]})};
   if(path==="status"){
     const k=body.key, a={not_accepted:["auth_status","not_accepted"],pending_rescan:["rescan_at","pending_rescan"],archive:["archived_at","archived"]}[k]; if(!a) throw new Error("Unknown status action.");
@@ -1247,7 +1257,7 @@ async function find(text){
   if(ARCHK(S.kind)&&res.card_id){ const b=document.querySelector("#source b"); if(b) b.textContent=`${res.view_label||VIEWS[S.view]} · ${DEMO?"Demo":"Live"} · Metabase ${res.card_id}, fresh every search`; }
   if(S.kind==="arena"){ S.av=ARENA_V; }
   const wantQ=ARENA_V==="customer"?47455:ARENA_V==="crop"?48181:45739;
-  if(ARENA_V==="crop") setTimeout(()=>S&&photoChecks(S.matched),0); if(DEMO&&res.card_id) res.card_id=wantQ; // demo data stands in for every Arena question
+  if(ARENA_V==="crop") setTimeout(()=>{ if(S){ photoChecks(S.matched); cropStatusLoad(S.matched); } },0); if(DEMO&&res.card_id) res.card_id=wantQ; // demo data stands in for every Arena question
   if(S.kind==="arena"&&res.card_id){ const b=document.querySelector("#source b"); if(b) b.textContent=`${DEMO?"Demo":"Live"} · Metabase ${res.card_id}${res.check_card_id?` + Overall Check ${res.check_card_id}`:""}, fresh every search`;
     if(Number(res.card_id)!==wantQ) $("#srcMsg").insertAdjacentHTML("afterbegin",`<div class="warn-txt small">Arena Club is reading question ${esc(String(res.card_id))}, not 45739 — ARENA_METABASE_CARD_ID is set in Vercel. Delete it (or set it to 45739) and redeploy.</div>`); }
   if(S.kind==="arena") refreshLive();
@@ -1269,7 +1279,10 @@ const arenaStatusRow=r=>{ const auth=String(r.auth_status||"").toLowerCase();
   const st=String(r.status||"").toLowerCase(), isArc=!!(r.archived_at||st==="archived"), isRsc=!!(r.rescan_at||st==="pending_rescan"), isNa=auth==="not_accepted";
   const x=(html,cond)=>cond?html.replace('class="ast','class="ast strk'):html;
   const statusPill=r.status?x(stHtml(r.status),(p.archive==="remove"&&st==="archived")||(p.pending_rescan==="remove"&&st==="pending_rescan")):"";
-  const bits=[statusPill, r.crop_ok&&r.crop_ok.length?`<span class="ast pend" style="color:var(--go)!important;border-color:var(--go)!important" title="crop approved: ${esc(r.crop_ok.join(" + "))}">crop ✓</span>`:"",
+  const bits=[statusPill, r.crop_state==="done"||(!r.crop_state&&r.crop_ok&&r.crop_ok.length)?`<span class="ast cropok" title="Crop approved in admin (front + back)">crop ✓</span>`
+      :r.crop_state==="part"?`<span class="ast croppart" title="Crop: front ${esc(r.crop_sides.front||"—")} · back ${esc(r.crop_sides.back||"—")}">crop ${r.crop_sides.front==="approved"?"front ✓":"back ✓"} only</span>`
+      :r.crop_state==="todo"?`<span class="ast croptodo" title="Crop not approved yet">crop to do</span>`:"",
+      (()=>{ const sd=sidesOf(r.item_id); return typeof ARENA_V!=="undefined"&&ARENA_V==="crop"&&!(sd.front&&sd.back)?`<span class="ast croppick" title="Approve crop will do only this side">${sd.front?"approve front only":sd.back?"approve back only":"crop: skip"}</span>`:""; })(),
     auth&&auth!=="none"?x(`<span class="ast st-not_accepted st-bad">${esc(isNa?"Not accepted":r.auth_status)}</span>`,p.not_accepted==="remove"&&isNa):"",
     r.archived_at?x(`<span class="ast st-archived" title="Archived At">archived ${esc(fmtAt(r.archived_at))}</span>`,p.archive==="remove"):"",
     r.rescan_at?x(`<span class="ast st-pending_rescan" title="Rescan Requested At">rescan ${esc(fmtAt(r.rescan_at))}</span>`,p.pending_rescan==="remove"):"",
@@ -1301,12 +1314,17 @@ const gParts=()=>{ const g=gPlan(); return [...(g.tsubs.has("corners")?["corner"
 function gPlan(){ return S.gp||(S.gp={overall:false,clear:false,task:false,subs:new Set(),tsubs:new Set()}); }
 function gTaskOn(){ const g=gPlan(); return g.task&&[...g.tsubs].some(k=>G_TASK_READY.has(k)); }
 function gActive(){ const g=gPlan(); return cropOn()||g.overall||(g.clear&&g.subs.size>0)||gTaskOn(); }
+const sidesOf=id=>{ const p=(S&&S.cropPick||{})[id]; return {front:p?p.front!==false:true, back:p?p.back!==false:true}; };
+function pickSide(id,side){ S.cropPick=S.cropPick||{}; const cur=sidesOf(id); cur[side]=!cur[side]; S.cropPick[id]=cur;
+  if((cur.front||cur.back)&&!S.selected.has(id)) S.selected.add(id); }
 const cropOn=()=>typeof ARENA_V!=="undefined"&&ARENA_V==="crop"&&!!(S&&S.cropOn);
 function cropRow(locked){
   if(typeof ARENA_V==="undefined"||ARENA_V!=="crop"||!S) return "";
   return `<div class="sact" role="group" aria-label="Crop"><span class="dim small">Crop:</span>
     <span class="sagrp"><button type="button" class="sabtn${S.cropOn?" on":""}" id="cropApprove" aria-pressed="${!!S.cropOn}" ${locked?"disabled":""}>Approve crop</button></span>
-    <span class="dim small">front + back crop tasks, under your name · runs first when you click <b>Apply to admin</b></span></div>`;
+    <span class="dim small">front + back crop tasks, under your name · runs first when you click <b>Apply to admin</b></span>
+    ${(()=>{ const m=S.matched.filter(r=>r.crop_state), done=m.filter(r=>r.crop_state==="done").length, todo=m.length-done;
+      return m.length?`<span class="small"><b style="color:#22c55e">${done} approved</b> · <b>${todo} to do</b>${todo?` <button type="button" class="btn link" id="cropTodo" ${locked?"disabled":""}>Select just the ${todo} to do</button>`:""}</span>`:""; })()}</div>`;
 }
 async function cropApprove(){
   const sel=S.rows.filter(r=>S.selected.has(r.item_id)), N=sel.length; if(!N) return;
@@ -1377,7 +1395,8 @@ async function gApply(){
     return `<li><span><b>${esc(c.player_name||"")}</b> <span class="dim">AC ${esc(c.ac||"")}</span><br>${Object.entries(o).map(([k,v])=>`${lab[k]} ${gNow(c,k)??"–"} → <b>${v}</b>`).join(" · ")}</span></li>`; });
   // one confirm for everything; then it runs straight through, no more popups
   const ok=await ask({title:`Apply to ${sel.length} card${sel.length===1?"":"s"} in admin?`,
-    body:`${dry?"<b>Dry run:</b> nothing is written.<br><br>":""}${cropOn()?`<div class="planline"><b>Crop · approve</b><br>Front and back crop tasks approved on each card, under your name (admin's Verify crop → Approve).</div>`:""}${corners?`<div class="planline"><b>1 · ${gParts().map(p=>p[0].toUpperCase()+p.slice(1)+"s").join(" + ")} → none</b><br>${gParts().includes("corner")?"All four corners get a Review Override with every annotation at <b>none</b>":""}${gParts().includes("corner")&&gParts().length>1?"; ":""}${gParts().includes("edge")?"all four edges get a Review Override with their annotations <b>removed</b>":""}${gParts().includes("edge")&&gParts().includes("surface")?"; ":""}${gParts().includes("surface")?"front and back surface get a Review Override with their annotations <b>removed</b> (saved as an override, like admin)":""}. All under your name.</div>`:""}
+    body:`${dry?"<b>Dry run:</b> nothing is written.<br><br>":""}${cropOn()?(()=>{ const ids=sel.map(r=>r.item_id), f=ids.filter(id=>{const s=sidesOf(id);return s.front&&!s.back;}).length, b=ids.filter(id=>{const s=sidesOf(id);return s.back&&!s.front;}).length, n=ids.filter(id=>{const s=sidesOf(id);return !s.front&&!s.back;}).length;
+      return `<div class="planline"><b>Crop · approve</b><br>Front and back crop tasks approved on each card, under your name (admin's Verify crop → Approve).${f||b||n?`<br><span class="dim">${[f?`${f} front only`:"",b?`${b} back only`:"",n?`${n} skipped`:""].filter(Boolean).join(" · ")}</span>`:""}</div>`; })():""}${corners?`<div class="planline"><b>1 · ${gParts().map(p=>p[0].toUpperCase()+p.slice(1)+"s").join(" + ")} → none</b><br>${gParts().includes("corner")?"All four corners get a Review Override with every annotation at <b>none</b>":""}${gParts().includes("corner")&&gParts().length>1?"; ":""}${gParts().includes("edge")?"all four edges get a Review Override with their annotations <b>removed</b>":""}${gParts().includes("edge")&&gParts().includes("surface")?"; ":""}${gParts().includes("surface")?"front and back surface get a Review Override with their annotations <b>removed</b> (saved as an override, like admin)":""}. All under your name.</div>`:""}
       ${zeros?`<div class="planline"><b>${corners?"2":"1"} · Grades → 0</b>, then approved (label and slab rebuilt)<ul class="taglist gl">${zl.join("")}</ul></div>`:""}
       ${gTagsOn()?`<div class="planline"><b>${1+(corners?1:0)+(zeros?1:0)} · Tags</b>, added last, keeping each card's other tags: ${tagPills(S.tag)}</div>`:""}
       <div class="dim small">Runs in this order. Each step can be undone from Recent runs.</div>`,
@@ -1411,15 +1430,18 @@ async function gApply(){
   const failAll=(part,e)=>({ok:[],fail:part.map(id=>({id,error:e.message||String(e)}))});
   draw();
   // crop first: it's the first step of grading
-  if(cropOn()) await run("crop",async part=>{ try{
-      const r=await api("crop-approve",{text:S.text,item_ids:part,dry_run:dry}), bad=(r.cards||[]).filter(c=>c.error);
+  if(cropOn()) await run("crop",async part0=>{ try{
+      const part=part0.filter(id=>{ const sd=sidesOf(id); return sd.front||sd.back; }), skipped=part0.filter(id=>!part.includes(id));
+      const sides=Object.fromEntries(part.map(id=>[id,sidesOf(id)]).filter(([,sd])=>!(sd.front&&sd.back)).map(([id,sd])=>[id,["front","back"].filter(k=>sd[k])]));
+      if(!part.length) return {ok:skipped,fail:[]};
+      const r=await api("crop-approve",{text:S.text,item_ids:part,dry_run:dry,sides}), bad=(r.cards||[]).filter(c=>c.error);
       const cs=r.cards||[], side=x=>x.length?x.join(" + "):"—";
-      if(!r.dry_run) cropMarkRan(cs.filter(c=>!c.error).map(c=>c.item_id));
+      if(!r.dry_run){ cropMarkRan(cs.filter(c=>!c.error).map(c=>c.item_id)); cs.filter(c=>!c.error).forEach(c=>{ const row=S.matched.find(x=>x.item_id===c.item_id); if(row){ row.crop_state="done"; row.crop_sides={front:"approved",back:"approved",done:true}; } }); }
       cs.filter(c=>!c.error).forEach(c=>{ cropDone.push({id:c.item_id,sides:c.sides||[],already:c.already||[],dry:!!r.dry_run});
         const row=S.matched.find(x=>x.item_id===c.item_id); if(row&&!r.dry_run) row.crop_ok=[...(c.sides||[]),...(c.already||[])]; });
       details.push(`Approve crop · ${part.length} card${part.length===1?"":"s"} <span class="dim">· run ${esc(r.run_id||"")}</span>`+cs.map(c=>`<br>&nbsp; ${esc(acOf(c.item_id))}: approved <b>${side(c.sides||[])}</b>${(c.already||[]).length?` · already approved ${esc(side(c.already))}`:""}`).join(""));
-      return {ok:part.filter(id=>!bad.some(c=>c.item_id===id)),fail:bad.map(c=>({id:c.item_id,error:c.error}))};
-    }catch(e){ return failAll(part,e); } });
+      return {ok:[...skipped,...part.filter(id=>!bad.some(c=>c.item_id===id))],fail:bad.map(c=>({id:c.item_id,error:c.error}))};
+    }catch(e){ return failAll(part0,e); } });
   if(corners) await run("c",async part=>{ try{
       const r=await api("corners",{text:S.text,item_ids:part,dry_run:dry,skip_images:zeros&&!dry,parts:gParts()});
       // "corners saved; label/slab rebuild failed" = the overrides are in; only the picture rebuild needs a retry → warning, not a failure
@@ -2195,6 +2217,14 @@ function fitNote(img){ const f=photoFit(img.naturalWidth,img.naturalHeight), cap
 function tileFit(img,id){ const f=photoFit(img.naturalWidth,img.naturalHeight); const c=(S&&S.matched||[]).find(x=>x.item_id===id); if(!f) return;
   if(c) c.photo_fit=f; const art=img.closest(".art"); if(!art) return; art.querySelectorAll(".fitbadge:not(.pc)").forEach(x=>x.remove());
   if(!f.ok){ const b=document.createElement("span"); b.className="fitbadge"; b.title=`Photo isn't 2.5 × 3.5 (${f.w}×${f.h} px, ratio ${f.r.toFixed(3)}): ${f.why}`; b.textContent="⚠ not 2.5×3.5"; art.appendChild(b); } }
+// which cards already have their crop approved (front + back), read from admin so it holds across sessions and people
+async function cropStatusLoad(rows){
+  const ids=rows.map(r=>r.item_id);
+  for(let i=0;i<ids.length;i+=50){ let r; try{ r=await api("crop-status",{item_ids:ids.slice(i,i+50)}); }catch{ break; }
+    for(const [id,v] of Object.entries(r||{})){ const c=S.matched.find(x=>x.item_id===id); if(!c||v.error) continue;
+      c.crop_state=v.done?"done":(v.front==="approved"||v.back==="approved")?"part":"todo"; c.crop_sides=v; } }
+  render();
+}
 // whole-card check (server measures the space on each side of the photo): flags cards that run into the edge or sit off-centre
 const PCHK={};
 async function photoChecks(rows){
@@ -2331,7 +2361,8 @@ function showInfo(id){
   // Prev / Next walk the cards in the order they're shown on screen
   const list=(S.rows&&S.rows.length?S.rows:S.matched).filter(c=>c.kind===r.kind), pos=Math.max(0,list.findIndex(c=>c.item_id===r.item_id));
   d.innerHTML=`<div class="in">
-    ${(r.img_front||r.img_back)?`<div class="pic pic2">${[["Front",r.img_front||r.img],["Back",r.img_back]].map(([lab,u])=>`<figure><figcaption class="dim small">${lab}</figcaption>${u?`<a href="${esc(u)}" target="_blank" rel="noopener" title="Open full size"><img src="${esc(u)}" alt="${lab} of the card" referrerpolicy="no-referrer" onload="fitNote(this)" onerror="this.replaceWith(Object.assign(document.createElement('span'),{className:'dim small',textContent:'Photo unavailable'}))"></a><div class="fitnote"></div>`:`<span class="dim small">No ${lab.toLowerCase()} photo</span>`}</figure>`).join("")}</div>`
+    ${(r.img_front||r.img_back)?`<div class="pic pic2">${[["Front",r.img_front||r.img],["Back",r.img_back]].map(([lab,u])=>`<figure><figcaption class="dim small">${lab}</figcaption>${u?`<a href="${esc(u)}" target="_blank" rel="noopener" title="Open full size"><img src="${esc(u)}" alt="${lab} of the card" referrerpolicy="no-referrer" onload="fitNote(this)" onerror="this.replaceWith(Object.assign(document.createElement('span'),{className:'dim small',textContent:'Photo unavailable'}))"></a><div class="fitnote"></div>${typeof ARENA_V!=="undefined"&&ARENA_V==="crop"&&S.phase==="review"?(()=>{ const sd=lab==="Front"?"front":"back", on=sidesOf(r.item_id)[sd]&&S.selected.has(r.item_id);
+        return `<button type="button" class="sidepick${on?" on":""}" data-side="${sd}" aria-pressed="${on}" title="Approve the ${sd} crop (${sd==="front"?"V":"N"})">${on?`✓ Approve ${sd}`:`Skip ${sd}`} <kbd>${sd==="front"?"V":"N"}</kbd></button>`; })():""}`:`<span class="dim small">No ${lab.toLowerCase()} photo</span>`}</figure>`).join("")}</div>`
       :`<div class="pic">${r.img?`<img src="${esc(r.img)}" alt="Slab photo" referrerpolicy="no-referrer" onerror="this.replaceWith(Object.assign(document.createElement('span'),{className:'dim small',textContent:'Photo unavailable'}))">`:`<span class="dim small">No photo</span>`}</div>`}
     <div>
       <h2>${esc(r.player_name)}</h2>
@@ -2363,9 +2394,9 @@ function showInfo(id){
       <span class="infonav"><button class="btn" type="button" id="infoPrev" ${pos>0?"":"disabled"} title="Previous card (← or Shift+Space)">‹ Prev</button>
       <span class="dim small">${pos+1} of ${list.length}</span>
       <button class="btn" type="button" id="infoNext" ${pos<list.length-1?"":"disabled"} title="Next card (Space or →)">Next ›</button>
-      ${(r.img_front||r.img_back)?`<span class="dim small" title="B front · N back · G background · X select · Space next">B · N zoom</span>`:""}
+      ${(r.img_front||r.img_back)?`<span class="dim small" title="C zoom front · B zoom back · V front · N back · M whole card · G background · Space next">C · B zoom${typeof ARENA_V!=="undefined"&&ARENA_V==="crop"?" · V · N sides · M card":" · M card"}</span>`:""}
       ${(r.img_front||r.img_back)?`<button class="btn" type="button" id="infoBg" title="Switch the photo background (G)">${PHOTO_DARK?"☀ White background":"☾ Dark background"}</button>`:""}
-      ${S.phase==="review"?`<button class="btn isel${S.selected.has(r.item_id)?" on":""}" type="button" id="infoSel" aria-pressed="${S.selected.has(r.item_id)}" title="Select / deselect this card (X)">${S.selected.has(r.item_id)?"✓ Selected":"Not selected"}</button>`:""}</span>
+      ${S.phase==="review"?`<button class="btn isel${S.selected.has(r.item_id)?" on":""}" type="button" id="infoSel" aria-pressed="${S.selected.has(r.item_id)}" title="Select / deselect this card (M)">${S.selected.has(r.item_id)?"✓ Selected":"Not selected"}</button>`:""}</span>
       <button class="btn primary" type="button" id="infoClose">Close</button>
     </div>`;
   if(!d.open) d.showModal(); $("#infoClose").onclick=()=>d.close();
@@ -2374,22 +2405,27 @@ function showInfo(id){
   // select / deselect this card without leaving the popup (X); the tiles and counts behind update
   const toggleSel=()=>{ if(S.phase!=="review") return; S.selected.has(r.item_id)?S.selected.delete(r.item_id):S.selected.add(r.item_id); render(); showInfo(r.item_id); };
   const sb=$("#infoSel"); if(sb) sb.onclick=toggleSel;
+  const toggleSide=sd=>{ if(S.phase!=="review"||ARENA_V!=="crop") return; pickSide(r.item_id,sd); render(); showInfo(r.item_id); };
+  d.querySelectorAll(".sidepick").forEach(b=>b.onclick=()=>toggleSide(b.dataset.side));
   d.classList.toggle("photodark",PHOTO_DARK);
   const toggleBg=()=>togglePhotoBg();
   const bgb=$("#infoBg"); if(bgb) bgb.onclick=toggleBg;
   // Space / → next card, Shift+Space / ← previous (only while this popup is open)
   d.onkeydown=e=>{ if(e.target&&/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return;
     if(e.key===" "||e.key==="ArrowRight"||e.key==="ArrowLeft"){ e.preventDefault(); go(e.key==="ArrowLeft"||(e.key===" "&&e.shiftKey)?-1:1); }
-    else if(e.key.toLowerCase()==="x"){ e.preventDefault(); toggleSel(); }
-    else if(e.key.toLowerCase()==="b"&&(r.img_front||r.img)){ e.preventDefault(); zoomPhoto(0); }
-    else if(e.key.toLowerCase()==="n"&&r.img_back){ e.preventDefault(); zoomPhoto(1); }
+    else if(e.metaKey||e.ctrlKey||e.altKey) return; // leave Cmd+C etc. alone
+    else if(e.key.toLowerCase()==="m"){ e.preventDefault(); toggleSel(); }                                   // M: whole card
+    else if(e.key.toLowerCase()==="v"){ e.preventDefault(); toggleSide("front"); }                           // V: front side
+    else if(e.key.toLowerCase()==="n"){ e.preventDefault(); toggleSide("back"); }                            // N: back side
+    else if(e.key.toLowerCase()==="c"&&(r.img_front||r.img)){ e.preventDefault(); zoomPhoto(0); }           // C: zoom front
+    else if(e.key.toLowerCase()==="b"&&r.img_back){ e.preventDefault(); zoomPhoto(1); }                     // B: zoom back
     else if(e.key.toLowerCase()==="g"&&(r.img_front||r.img_back)){ e.preventDefault(); toggleBg(); } };
   // B / N: the front / back photo filling the window (same key, Esc or a click closes it); hover anywhere on it to magnify
   const zoomPhoto=i=>{ const old=d.querySelector(".pzoom"), want=i===0?"front":"back";
     if(old){ const same=old.dataset.side===want; old.remove(); if(same) return; }
     const u=i===0?(r.img_front||r.img):r.img_back; if(!u) return;
     const z=document.createElement("div"); z.className="pzoom"; z.dataset.side=want;
-    z.innerHTML=`<div class="pzlab">${i===0?"Front":"Back"} · <b>${i===0?"B":"N"}</b> or Esc to close · hover to magnify</div><div class="pzwrap"><img src="${esc(u)}" alt="${want} of the card" referrerpolicy="no-referrer"></div>`;
+    z.innerHTML=`<div class="pzlab">${i===0?"Front":"Back"} · <b>${i===0?"C":"B"}</b> or Esc to close · hover to magnify</div><div class="pzwrap"><img src="${esc(u)}" alt="${want} of the card" referrerpolicy="no-referrer"></div>`;
     z.onclick=()=>z.remove(); d.appendChild(z); hoverZoom(z.querySelector(".pzwrap")); };
   d.querySelectorAll("#info .pic2 figure a").forEach(a=>hoverZoom(a));
   const esc0=d.oncancel; d.oncancel=e=>{ const z=d.querySelector(".pzoom"); if(z){ e.preventDefault(); z.remove(); } else if(esc0) esc0(e); };
@@ -2546,6 +2582,7 @@ function bindSummary(){
     S.sact=planList()[0]||null; render();
     if(S.plan[k]){ const mine=S; liveDates(S.rows.filter(r=>S.selected.has(r.item_id))).then(()=>{ if(S===mine&&planList().length){ recompute(false); render(); } }).catch(()=>{}); } });
   const cab=$("#cropApprove"); if(cab) cab.onclick=()=>{ S.cropOn=!S.cropOn; render(); };
+  const ctd=$("#cropTodo"); if(ctd) ctd.onclick=()=>{ S.selected=new Set(S.rows.filter(r=>r.crop_state&&r.crop_state!=="done").map(r=>r.item_id)); render(); };
   document.querySelectorAll(".gp").forEach(b=>b.onclick=()=>{ const g=gPlan();
     if(b.dataset.g==="overall") g.overall=!g.overall;
     else if(b.dataset.g==="clear"){ g.clear=!g.clear; if(g.clear) G_SUBS.forEach(([k])=>g.subs.add(k)); else g.subs.clear(); } // ② clears all four; unlight one to keep it
@@ -2999,7 +3036,7 @@ function ordersRender(){
   p.innerHTML=`<div class="otools"><b>${o.length} order${o.length===1?"":"s"}</b> <span class="dim small">${OP.hasDue?"soonest due date first":"no due date column in the question, so sorted by order number"} · drag over the order numbers to highlight them and Cmd/Ctrl+C to copy, or click/drag the other columns to pick rows</span>
     <span style="margin-left:auto;display:flex;gap:6px;flex-wrap:wrap;align-items:center">${OP.at?`<span class="dim small">read ${esc(OP.at.toLocaleTimeString([], {hour:"numeric",minute:"2-digit"}))}</span>`:""}<button type="button" class="btn" id="oRefresh" title="Read Metabase 48181 again: orders, due dates, card counts and crop marks">↻ Refresh</button><button type="button" class="btn link" id="oAll">Select all</button><button type="button" class="btn link" id="oNone">Clear</button>
     <button type="button" class="btn" id="oCopy" ${n?"":"disabled"}>Copy ${n||""}</button><button type="button" class="btn primary" id="oFind" ${n?"":"disabled"}>Search ${n||""} order${n===1?"":"s"}</button></span></div>
-    <div class="olist"><table><thead><tr><th></th><th>Order</th><th title="red = past due · orange = due within 3 days">Due</th><th>Cards</th><th>Status</th><th title="TAG-BOT ran Approve crop on this order, and/or tick it as cropped by hand">Crop</th></tr></thead><tbody>${o.map((x,i)=>`<tr data-oi="${i}" class="${OP.sel.has(x.order)?"on":""}"><td><input type="checkbox" tabindex="-1" ${OP.sel.has(x.order)?"checked":""} aria-label="Pick order ${esc(x.order)}"></td><td class="onum"><b>${esc(x.order)}</b></td><td class="${dueCls(x.due)}">${esc(fmtDue(x.due))}</td><td>${x.cards}</td><td class="dim small">${esc(Object.entries(x.statuses).map(([k,v])=>`${k}${v>1?" ×"+v:""}`).join(" · "))}</td><td class="ocrop">${cropCell(x.order)}</td></tr>`).join("")}</tbody></table></div>`;
+    <div class="olist"><table><thead><tr><th></th><th>Order</th><th>Customer</th><th title="red = past due · orange = due within 3 days">Due</th><th>Cards</th><th>Status</th><th title="TAG-BOT ran Approve crop on this order, and/or tick it as cropped by hand">Crop</th></tr></thead><tbody>${o.map((x,i)=>`<tr data-oi="${i}" class="${OP.sel.has(x.order)?"on":""}"><td><input type="checkbox" tabindex="-1" ${OP.sel.has(x.order)?"checked":""} aria-label="Pick order ${esc(x.order)}"></td><td class="onum"><b>${esc(x.order)}</b></td><td class="dim">${esc(x.customer||"—")}</td><td class="${dueCls(x.due)}">${esc(fmtDue(x.due))}</td><td>${x.cards}</td><td class="dim small">${esc(Object.entries(x.statuses).map(([k,v])=>`${k}${v>1?" ×"+v:""}`).join(" · "))}</td><td class="ocrop">${cropCell(x.order)}</td></tr>`).join("")}</tbody></table></div>`;
   // drag down (or up) the list to highlight several orders; click toggles one; Shift+click a range; Cmd/Ctrl+C copies
   const paint=()=>p.querySelectorAll("tbody tr").forEach(tr=>{ const on=OP.sel.has(o[+tr.dataset.oi].order); tr.classList.toggle("on",on); tr.querySelector("input").checked=on; });
   const tools=()=>{ const n=OP.sel.size; const c=$("#oCopy"), f=$("#oFind"); c.disabled=f.disabled=!n; c.textContent=`Copy ${n||""}`; f.textContent=`Search ${n||""} order${n===1?"":"s"}`; };
@@ -3035,7 +3072,8 @@ async function ordersLoad(){
   else { const b=$("#oRefresh"); if(b){ b.disabled=true; b.innerHTML=`<span class="spin"></span> Refreshing…`; } }
   try{ const r=await api("arena-orders",{}); OP.orders=r.orders||[]; OP.hasDue=!!r.has_due; OP.marks=r.marks||{}; OP.loaded=true; OP.q=ARENA_V; OP.at=new Date();
     const still=new Set(OP.orders.map(o=>o.order)); OP.sel=new Set([...OP.sel].filter(o=>still.has(o))); // keep picks that are still in the list
-    ordersRender(); }
+    ordersRender();
+    if(!first&&S&&S.matched&&typeof ARENA_V!=="undefined"&&ARENA_V==="crop") cropStatusLoad(S.matched); } // Refresh also re-reads crop ✓ / to do on the cards shown
   catch(e){ if(first) p.innerHTML=`<span class="warn-txt">Couldn't read the orders: ${esc(e.message)}</span>`; else { ordersRender(); $("#ordersPanel .otools").insertAdjacentHTML("beforeend",`<span class="warn-txt">Refresh failed: ${esc(e.message)}</span>`); } }
 }
 async function ordersOpen(){
