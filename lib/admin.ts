@@ -431,7 +431,7 @@ export async function liveCards(session: AdminSession, ids: string[]) {
       const raw = await r.json();
       const c: Record<string, any> = raw && raw.card ? raw.card : raw;
       const pick: Record<string, unknown> = {};
-      for (const k of ["overall", "centering", "corners", "edges", "surface", "frontSlabPictureUrl", "frontLabelPictureUrl", "backLabelPictureUrl", "status", "authenticationStatus", "playerName", "labelPlayerName", "setName", "labelSetName", "setNumber", "insert", "frontPictureUrl"])
+      for (const k of ["overall", "centering", "corners", "edges", "surface", "frontSlabPictureUrl", "frontLabelPictureUrl", "backLabelPictureUrl", "status", "authenticationStatus", "playerName", "labelPlayerName", "setName", "labelSetName", "setNumber", "insert", "frontPictureUrl", "backPictureUrl"])
         if (c[k] !== undefined) pick[k] = c[k];
       // the card's tag: admin writes it as "tag"; read it back however the card record carries it (no tag = null)
       const tagName = (t: any) => (typeof t === "string" ? t : t?.name ?? t?.tag ?? null);

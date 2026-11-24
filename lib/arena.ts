@@ -165,6 +165,9 @@ function toCard(o0: Record<string, unknown>, idKey: string | null, i: number, or
     last_comp: n(col(o, ["LAST_COMP", "LAST_COMP_VALUE"], /LAST_COMP/)),
     tag: s(col(o, ["TAG", "ITEM_TAG"])),
     img: img ? String(o[img]) : null,
+    // raw card photos, both sides, when the question has them (e.g. Front Image / Back Image on 48181)
+    img_front: s(Object.entries(o).find(([k, v]) => /FRONT/.test(k) && /PICTURE|IMAGE|PHOTO|IMG/.test(k) && !/SLAB|LABEL/.test(k) && /^https?:\/\//.test(String(v ?? "")))?.[1]),
+    img_back: s(Object.entries(o).find(([k, v]) => /BACK/.test(k) && /PICTURE|IMAGE|PHOTO|IMG/.test(k) && !/SLAB|LABEL/.test(k) && /^https?:\/\//.test(String(v ?? "")))?.[1]),
     card_url: cardUrl,
     order_number: order,
     order_url: orderUrl ?? (process.env.ARENA_ORDER_URL ? process.env.ARENA_ORDER_URL.replace("{order}", order) : null),

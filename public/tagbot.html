@@ -240,6 +240,13 @@ h1 span{color:var(--go)}
 .drop body,.dropping{outline:3px dashed var(--go);outline-offset:-10px}
 .slab .art{position:relative;overflow:hidden}
 .slab .art img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#0b0f0c;padding:4px}
+/* the picture always stays inside its frame (raw card photos like the Crop tile's are taller than slab shots) */
+.slab{position:relative}
+.slab .art{position:relative;overflow:hidden;isolation:isolate}
+.slab .art img{max-width:100%;max-height:100%;box-sizing:border-box}
+.tile .check{z-index:3}
+/* the label strip is always tall enough to hold the i and ✓ buttons, so the picture starts below them */
+.tile .slab .lbl{min-height:30px;align-items:center;padding-left:34px;padding-right:34px}
 .more{margin-top:10px;text-align:center}
 .mode{margin-left:6px;border:1px solid var(--warn);color:var(--warn);border-radius:5px;padding:0 6px;font-size:11.5px;font-weight:700}
 .mode.live{border-color:var(--go);color:var(--go)}
@@ -338,6 +345,21 @@ h1 span{color:var(--go)}
 .pstep .pnum{white-space:nowrap;font-variant-numeric:tabular-nums}
 .pfails{font-size:12px;display:grid;gap:4px;margin-top:2px;max-height:110px;overflow:auto}
 .pfails .pf{display:inline-block;margin:0 10px 0 6px}
+/* info popup: front + back side by side */
+#info .infonav{display:inline-flex;align-items:center;gap:8px;margin-right:auto}
+/* two-photo popup: wide enough for front + back next to the details, and always fits the window (no scrolling) */
+#info:has(.pic2){width:min(1280px,96vw);max-width:96vw;max-height:94vh;overflow:hidden}
+#info:has(.pic2) .in{grid-template-columns:minmax(0,1.35fr) minmax(280px,1fr);align-items:start;max-height:calc(94vh - 84px);overflow:auto}
+#info .pic2 img{max-height:calc(94vh - 170px)!important}
+#info:has(.pic2) dl{font-size:13px}
+@media (max-width:820px){#info:has(.pic2) .in{grid-template-columns:1fr}}
+#info .pic2{display:grid;grid-template-columns:1fr 1fr;gap:10px;align-items:start}
+#info .pic2 figure{margin:0;display:grid;gap:4px;justify-items:center;min-width:0}
+#info .pic2 img{width:100%;height:auto;max-height:62vh;object-fit:contain;border-radius:8px;background:#0b0f0c}
+@media (max-width:700px){#info .pic2{grid-template-columns:1fr}}
+.pok{font-size:12px;max-height:120px;overflow:auto;border:1px solid color-mix(in srgb,var(--go) 45%,transparent);border-radius:8px;padding:6px 8px;color:var(--text)}
+.pok>b{color:var(--go)}
+.pok .pf{display:inline-block;margin:3px 6px 0 0;padding:1px 8px;border-radius:999px;border:1px solid var(--line);white-space:nowrap}
 .pdet{font-size:12px;max-height:120px;overflow:auto}
 .pdet summary{cursor:pointer;color:var(--dim)}
 .planline{margin:0 0 10px;padding:8px 10px;border:1px solid var(--line);border-radius:8px}
@@ -1156,7 +1178,7 @@ const arenaStatusRow=r=>{ const auth=String(r.auth_status||"").toLowerCase();
   const st=String(r.status||"").toLowerCase(), isArc=!!(r.archived_at||st==="archived"), isRsc=!!(r.rescan_at||st==="pending_rescan"), isNa=auth==="not_accepted";
   const x=(html,cond)=>cond?html.replace('class="ast','class="ast strk'):html;
   const statusPill=r.status?x(stHtml(r.status),(p.archive==="remove"&&st==="archived")||(p.pending_rescan==="remove"&&st==="pending_rescan")):"";
-  const bits=[statusPill,
+  const bits=[statusPill, r.crop_ok&&r.crop_ok.length?`<span class="ast pend" style="color:var(--go)!important;border-color:var(--go)!important" title="crop approved: ${esc(r.crop_ok.join(" + "))}">crop ✓</span>`:"",
     auth&&auth!=="none"?x(`<span class="ast st-not_accepted st-bad">${esc(isNa?"Not accepted":r.auth_status)}</span>`,p.not_accepted==="remove"&&isNa):"",
     r.archived_at?x(`<span class="ast st-archived" title="Archived At">archived ${esc(fmtAt(r.archived_at))}</span>`,p.archive==="remove"):"",
     r.rescan_at?x(`<span class="ast st-pending_rescan" title="Rescan Requested At">rescan ${esc(fmtAt(r.rescan_at))}</span>`,p.pending_rescan==="remove"):"",
@@ -1273,7 +1295,7 @@ async function gApply(){
   // one progress bar per step, sent in small batches so big runs (50+) don't time out:
   // the bar fills batch by batch, failures get one automatic retry, and cards that still fail are listed with the reason
   const BATCH=6, chunk=(a,n)=>{ const o=[]; for(let i=0;i<a.length;i+=n) o.push(a.slice(i,i+n)); return o; };
-  const ids=sel.map(r=>r.item_id), steps=[], details=[], N=ids.length;
+  const ids=sel.map(r=>r.item_id), steps=[], details=[], N=ids.length, cropDone=[];
   if(cropOn()) steps.push({k:"crop",label:"Approve crop",n:N});
   if(corners) steps.push({k:"c",label:"① Remove subgrades task",n:N});
   const g0=gPlan(), subKeys=g0.clear?[...g0.subs]:[], doSubs=subKeys.length>0, doOver=!!g0.overall;
@@ -1287,6 +1309,7 @@ async function gApply(){
       <div class="pbar" aria-hidden="true"><i style="width:${pct(st.ok,st.n)}%"></i><b style="width:${pct(st.fails.length,st.n)}%"></b></div>
       <span class="pnum">${st.state==="wait"||!st.state?"waiting":`${st.ok}/${st.n}${st.fails.length?` · <span class="obad">${st.fails.length} failed</span>`:""}${st.state==="run"?(st.retrying?" · retrying…":" …"):""}`}</span></div>`).join("")}
       ${failed.length?`<div class="pfails">${failed.map(st=>`<div><b class="obad">✗ ${esc(st.label)}</b> ${st.fails.map(f=>`<span class="pf"><b>${esc(acOf(f.id))}</b>${f.error?` <span class="dim">${esc(String(f.error).slice(0,90))}</span>`:""}</span>`).join("")}</div>`).join("")}<div class="small"><button type="button" class="btn link" data-selfails="${esc([...new Set(failed.flatMap(st=>st.fails.map(f=>f.id)))].join(","))}">Select just these</button> <span class="dim">then Apply again to retry them.</span></div></div>`:""}
+      ${cropDone.length?`<div class="pok"><b>${cropDone[0].dry?"Dry run · would approve crop on":"✓ Crop approved on"} ${cropDone.length} card${cropDone.length===1?"":"s"}:</b> ${cropDone.map(c=>`<span class="pf"><b>${esc(acOf(c.id))}</b> <span class="dim">${esc(c.sides.length?c.sides.join(" + "):"")}${c.already.length?`${c.sides.length?" · ":""}${c.already.join(" + ")} already approved`:""}</span></span>`).join("")}</div>`:""}
       ${details.length?`<details class="pdet"><summary>Details · undo from Recent runs</summary>${details.join("<br>")}</details>`:""}</div>`; };
   // run one step over all cards in batches; fn(batchIds) → {ok:[ids], fail:[{id,error}]}; failures retried once
   const run=async(k,fn)=>{ const st=steps.find(x=>x.k===k); st.state="run"; draw();
@@ -1300,6 +1323,8 @@ async function gApply(){
   if(cropOn()) await run("crop",async part=>{ try{
       const r=await api("crop-approve",{text:S.text,item_ids:part,dry_run:dry}), bad=(r.cards||[]).filter(c=>c.error);
       const cs=r.cards||[], side=x=>x.length?x.join(" + "):"—";
+      cs.filter(c=>!c.error).forEach(c=>{ cropDone.push({id:c.item_id,sides:c.sides||[],already:c.already||[],dry:!!r.dry_run});
+        const row=S.matched.find(x=>x.item_id===c.item_id); if(row&&!r.dry_run) row.crop_ok=[...(c.sides||[]),...(c.already||[])]; });
       details.push(`Approve crop · ${part.length} card${part.length===1?"":"s"} <span class="dim">· run ${esc(r.run_id||"")}</span>`+cs.map(c=>`<br>&nbsp; ${esc(acOf(c.item_id))}: approved <b>${side(c.sides||[])}</b>${(c.already||[]).length?` · already approved ${esc(side(c.already))}`:""}`).join(""));
       return {ok:part.filter(id=>!bad.some(c=>c.item_id===id)),fail:bad.map(c=>({id:c.item_id,error:c.error}))};
     }catch(e){ return failAll(part,e); } });
@@ -1697,6 +1722,7 @@ async function refreshArchived(){
     if(!r.set_name&&(d.labelSetName||d.setName)) r.set_name=[d.labelSetName||d.setName,d.insert].filter(Boolean).join(" · ");
     if(!r.set_number&&d.setNumber) r.set_number=d.setNumber;
     if(!r.img&&(d.frontSlabPictureUrl||d.frontPictureUrl)) r.img=d.frontSlabPictureUrl||d.frontPictureUrl;
+    if(!r.img_front&&d.frontPictureUrl) r.img_front=d.frontPictureUrl; if(!r.img_back&&d.backPictureUrl) r.img_back=d.backPictureUrl;
     if(d.tag!==undefined) r.tag=d.tag||null;
     if(!r.img&&d.frontSlabPictureUrl) r.img=d.frontSlabPictureUrl;
     if(JSON.stringify([r.status,r.auth_status,r.tag,r.img,r.archived_at,r.rescan_at])!==before) changed++;
@@ -1726,6 +1752,7 @@ async function refreshLive(){
     if(!r.set_name&&(d.labelSetName||d.setName)) r.set_name=[d.labelSetName||d.setName,d.insert].filter(Boolean).join(" · ");
     if(!r.set_number&&d.setNumber) r.set_number=d.setNumber;
     if(!r.img&&(d.frontSlabPictureUrl||d.frontPictureUrl)) r.img=d.frontSlabPictureUrl||d.frontPictureUrl;
+    if(!r.img_front&&d.frontPictureUrl) r.img_front=d.frontPictureUrl; if(!r.img_back&&d.backPictureUrl) r.img_back=d.backPictureUrl;
     const o=num(d.overall), gc=r.grading_company||"arena_club";
     if(o!==null){
       if(o===0){ r.authentic=true; r.grade_num=0; r.check_overall=0; r.overall_check="pass"; r.grade=gc+" authentic"; for(const k of ["centering","corners","edges","surface"]) if(num(d[k])!==null) r[k]=num(d[k]); auth++; }
@@ -1879,7 +1906,7 @@ function tile(r){
   const facts=[r.kind==="watch"?"":r.cert?`Cert <b>${esc(r.cert)}</b>`:"", (r.bin||r.slot)?`Bin <b>${esc(r.bin??"—")}</b> · Slot <b>${esc(r.slot??"—")}</b>`:"", r.status?`Status ${stHtml(r.status)}`:"", r.ev_age_days!=null?`EV <b>${r.ev_age_days}d</b> old`:""].filter(Boolean).join("<br>");
   return arenaTile(r,`<div class="tw"><button type="button" class="infob" data-info="${esc(r.item_id)}" aria-label="Details for ${esc(r.player_name)}" title="Details">i</button><button type="button" class="tile${r.overall_check==="pass"?" chk-ok":r.overall_check==="fail"?" chk-bad":""}${r.kind==="arena"&&isLow(r)?" low75":""}" data-id="${r.item_id}" aria-pressed="${on}" ${S.phase!=="review"?"disabled":""} aria-label="${esc(r.player_name)} ${esc(r.set_name)}">
     <span class="check" aria-hidden="true">${on?"✓":""}</span>
-    <div class="slab"><div class="lbl"><span>${esc((r.grade||"").toUpperCase())}</span><span>${r.parallel_total?"/"+esc(r.parallel_total):""}</span></div>
+    <div class="slab"><div class="lbl"><span>${esc((r.grade||(r.ac?"8AC "+r.ac:"")).toUpperCase())}</span><span>${r.parallel_total?"/"+esc(r.parallel_total):""}</span></div>
       <div class="art" style="background:linear-gradient(150deg,hsl(${h} 55% 38%),hsl(${(h+40)%360} 60% 22%))">${esc(initials)}${r.img?`<img src="${esc(r.img)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()">`:""}</div></div>
     <div class="name">${esc(r.player_name)}</div>
     ${r.kind==="archived"?archInfo(r):r.kind==="arena"?arenaInfo(r):`<div class="meta">${esc(r.set_name)}${r.insert?" · "+esc(r.insert):""}${r.parallel_name?"<br>"+esc(r.parallel_name):""}</div>
@@ -2064,8 +2091,11 @@ function showInfo(id){
   if(r.kind==="watch"||(r.kind==="archived"&&r.view!=="arch_cards"&&r.view!=="arch_orders")) return showWatchInfo(r);
   const row=(k,v)=>v==null||v===""?"":`<dt>${k}</dt><dd>${v}</dd>`;
   const d=$("#info");
+  // Prev / Next walk the cards in the order they're shown on screen
+  const list=(S.rows&&S.rows.length?S.rows:S.matched).filter(c=>c.kind===r.kind), pos=Math.max(0,list.findIndex(c=>c.item_id===r.item_id));
   d.innerHTML=`<div class="in">
-    <div class="pic">${r.img?`<img src="${esc(r.img)}" alt="Slab photo" referrerpolicy="no-referrer" onerror="this.replaceWith(Object.assign(document.createElement('span'),{className:'dim small',textContent:'Photo unavailable'}))">`:`<span class="dim small">No photo</span>`}</div>
+    ${(r.img_front||r.img_back)?`<div class="pic pic2">${[["Front",r.img_front||r.img],["Back",r.img_back]].map(([lab,u])=>`<figure><figcaption class="dim small">${lab}</figcaption>${u?`<a href="${esc(u)}" target="_blank" rel="noopener" title="Open full size"><img src="${esc(u)}" alt="${lab} of the card" referrerpolicy="no-referrer" onerror="this.replaceWith(Object.assign(document.createElement('span'),{className:'dim small',textContent:'Photo unavailable'}))"></a>`:`<span class="dim small">No ${lab.toLowerCase()} photo</span>`}</figure>`).join("")}</div>`
+      :`<div class="pic">${r.img?`<img src="${esc(r.img)}" alt="Slab photo" referrerpolicy="no-referrer" onerror="this.replaceWith(Object.assign(document.createElement('span'),{className:'dim small',textContent:'Photo unavailable'}))">`:`<span class="dim small">No photo</span>`}</div>`}
     <div>
       <h2>${esc(r.player_name)}</h2>
       <div class="dim small">${esc(r.set_name)}${r.insert?" · "+esc(r.insert):""}${r.parallel_name?" · "+esc(r.parallel_name):""}${r.parallel_total?" /"+esc(r.parallel_total):""}</div>
@@ -2093,9 +2123,18 @@ function showInfo(id){
     </div></div>
     <div class="acts">
       ${r.card_url?`<a class="btn clickme" href="${esc(r.card_url)}" target="_blank" rel="noopener" title="Open in admin">Click Me</a>`:`<a class="btn clickme" href="https://admin.arenaclub.com/cards/${esc(r.item_id)}/estimate-value" target="_blank" rel="noopener" title="Open in admin">Click Me</a>`}
+      <span class="infonav"><button class="btn" type="button" id="infoPrev" ${pos>0?"":"disabled"} title="Previous card (← or Shift+Space)">‹ Prev</button>
+      <span class="dim small">${pos+1} of ${list.length}</span>
+      <button class="btn" type="button" id="infoNext" ${pos<list.length-1?"":"disabled"} title="Next card (Space or →)">Next ›</button></span>
       <button class="btn primary" type="button" id="infoClose">Close</button>
     </div>`;
-  d.showModal(); $("#infoClose").onclick=()=>d.close();
+  if(!d.open) d.showModal(); $("#infoClose").onclick=()=>d.close();
+  const go=k=>{ const t=list[pos+k]; if(t) showInfo(t.item_id); };
+  $("#infoPrev").onclick=()=>go(-1); $("#infoNext").onclick=()=>go(1);
+  // Space / → next card, Shift+Space / ← previous (only while this popup is open)
+  d.onkeydown=e=>{ if(e.target&&/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return;
+    if(e.key===" "||e.key==="ArrowRight"||e.key==="ArrowLeft"){ e.preventDefault(); go(e.key==="ArrowLeft"||(e.key===" "&&e.shiftKey)?-1:1); } };
+  $("#infoNext").focus({preventScroll:true});
 }
 let WI=null; // index into S.rows while the watch popup is open
 function showWatchInfo(r){
