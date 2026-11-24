@@ -14,6 +14,8 @@ const ALLOWED = /^https:\/\/(storage\.googleapis\.com|assets\.arenaclub\.com)\//
 const cache = new Map<string, PhotoCheck>();
 const TOUCH = 0.004; // under 0.4% of space on a side = the card runs into the edge
 const UNEVEN = 0.05; // sides more than 5% apart = off-centre
+const LOOSE = 0.025; // more than 2.5% background on a side = crop not tight (fail)
+const ROOMY = 0.015; // 1.5–2.5% = check
 
 export async function checkPhoto(url: string): Promise<PhotoCheck> {
   const hit = cache.get(url); if (hit) return hit;
@@ -54,19 +56,44 @@ export function analyzeJpeg(buf: Buffer): PhotoCheck {
       top: side("top", 0, 1, maxH, true) / h, bottom: side("bottom", h - 1, -1, maxH, true) / h,
       left: side("left", 0, 1, maxW, false) / w, right: side("right", w - 1, -1, maxW, false) / w,
     };
+    const keys = ["top", "bottom", "left", "right"] as const;
+    const lone = new Set<string>(keys.filter((k) => { const c = cols[k]; if (!c || bedDist(c) >= 90) return false;
+      const same = keys.filter((o) => o !== k && cols[o] && near(cols[o] as number[], c)).length;
+      const others = keys.filter((o) => o !== k && cols[o] && bedDist(cols[o] as number[]) < 90).length;
+      return same === 0 && others >= 2; }));
+    const cornerRounded = (x0: number, y0: number, dx: number, dy: number) => {
+      const avg = (x: number, y: number) => { const o = [0, 0, 0]; let n = 0;
+        for (let j = -1; j <= 1; j++) for (let i = -1; i <= 1; i++) { const xx = Math.min(w - 1, Math.max(0, x + i)), yy = Math.min(h - 1, Math.max(0, y + j)); const p = px(xx, yy); o[0] += p[0]; o[1] += p[1]; o[2] += p[2]; n++; }
+        return o.map((v) => v / n); };
+      const P = avg(x0 + dx * 2, y0 + dy * 2);                                         // the very corner
+      const A = avg(x0 + dx * Math.round(w * 0.08), y0 + dy * 2);                       // along the top/bottom edge, past the rounding
+      const B = avg(x0 + dx * 2, y0 + dy * Math.round(h * 0.08));                       // along the side edge, past the rounding
+      const d = (a: number[], b: number[]) => Math.abs(a[0] - b[0]) + Math.abs(a[1] - b[1]) + Math.abs(a[2] - b[2]);
+      return d(P, A) > 60 && d(P, B) > 60 && bedDist(P) < 120;                          // corner is background, edges next to it are card
+    };
+    const rounded = [cornerRounded(0, 0, 1, 1), cornerRounded(w - 1, 0, -1, 1), cornerRounded(0, h - 1, 1, -1), cornerRounded(w - 1, h - 1, -1, -1)].filter(Boolean).length;
+    const trimmed = rounded === 4; // whole card in, cropped tight to its edges: that's a pass
     const m = out.margins, touch = (Object.keys(m) as (keyof typeof m)[]).filter((k) => m[k] < TOUCH);
     // a side with no space while the opposite side has plenty = the card slid that way and is cut off there
     const opp: Record<string, keyof typeof m> = { top: "bottom", bottom: "top", left: "right", right: "left" };
-    const cut = touch.filter((k) => m[opp[k]] > 0.03), edge = touch.filter((k) => !cut.includes(k));
+    const cut = touch.filter((k) => m[opp[k]] > 0.03), edge = trimmed ? [] : touch.filter((k) => !cut.includes(k));
     if (cut.length) out.issues.push(`card is cut off on the ${cut.join(" / ")} (shifted in the photo)`);
     if (edge.length) out.issues.push(`card runs into the ${edge.join(" / ")} edge (may be cut off)`);
-    const gapV = Math.abs(m.top - m.bottom), gapH = Math.abs(m.left - m.right);
+    const gapV = lone.has("top") || lone.has("bottom") ? 0 : Math.abs(m.top - m.bottom), gapH = lone.has("left") || lone.has("right") ? 0 : Math.abs(m.left - m.right);
     if (gapV > UNEVEN || gapH > UNEVEN) out.issues.push("card is off-centre in the photo");
+    // a good crop hugs the card: more than 2.5% of scanner background on a side = the crop isn't tight (fail); 1.5–2.5% = check
+    const dark = keys.filter((k) => { const c = cols[k]; return !!c && c[0] + c[1] + c[2] < 90 && m[k] > 0.003 && !lone.has(k); });
+    if (dark.length >= 3) out.issues.push(`dark scanner background around the card on the ${dark.join(" / ")} (crop takes in the scanner bed)`);
+    const loose = (Object.keys(m) as (keyof typeof m)[]).filter((k) => m[k] > LOOSE && !lone.has(k));
+    if (loose.length) out.issues.push(`too much background on the ${loose.join(" / ")} (crop not tight to the card)`);
     out.level = out.issues.length ? "cut" : "ok";
     // close call (light flag): the whole card is in, but a side has very little space or the space is a bit uneven
     if (out.level === "ok") {
-      const thin = (Object.keys(m) as (keyof typeof m)[]).filter((k) => m[k] < 0.008);
+      const thin = trimmed ? [] : (Object.keys(m) as (keyof typeof m)[]).filter((k) => m[k] < 0.008);
       if (thin.length) out.issues.push(`very little space on the ${thin.join(" / ")}: check the edges`);
+      if (dark.length === 2) out.issues.push(`dark background on the ${dark.join(" / ")}: check the crop`);
+      const wide = (Object.keys(m) as (keyof typeof m)[]).filter((k) => m[k] > ROOMY && !lone.has(k));
+      if (wide.length) out.issues.push(`a lot of background on the ${wide.join(" / ")}: check the crop`);
       if (gapV > 0.025 || gapH > 0.025) out.issues.push("slightly off-centre");
       if (out.issues.length) out.level = "close";
     }
