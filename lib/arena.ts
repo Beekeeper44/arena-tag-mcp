@@ -264,3 +264,23 @@ export async function searchArena(text: string) {
     check_card_id: chkId,
   };
 }
+
+// ---------- order list for a tile (Crop: every order in question 48181), soonest due date first ----------
+export async function listArenaOrders() {
+  const rows = await runCard(cardId());
+  const by = new Map<string, { order: string; cards: number; due: string | null; statuses: Record<string, number> }>();
+  for (const r0 of rows) {
+    const o = Object.fromEntries(Object.entries(r0).map(([k, v]) => [K(k), v]));
+    const order = s(o.ORDER_NUMBER ?? o.ORDER ?? o.NUMBER);
+    if (!order) continue;
+    const dueKey = Object.keys(o).find((k) => /DUE/.test(k));
+    const due = dueKey ? s(o[dueKey]) : null;
+    const st = s(o.CARD_STATUS ?? o.ITEM_STATUS ?? o.STATUS) ?? "—";
+    const g = by.get(order) ?? { order, cards: 0, due: null, statuses: {} };
+    g.cards++; g.statuses[st] = (g.statuses[st] ?? 0) + 1;
+    if (due && (!g.due || due < g.due)) g.due = due; // the earliest due date among the order's cards
+    by.set(order, g);
+  }
+  const orders = [...by.values()].sort((a, b) => (a.due && b.due ? a.due.localeCompare(b.due) : a.due ? -1 : b.due ? 1 : 0) || a.order.localeCompare(b.order));
+  return { card_id: cardId(), has_due: orders.some((o) => o.due), orders, cards: rows.length };
+}

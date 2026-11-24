@@ -213,3 +213,7 @@ Everyone signed in sees the **Users** tab (who has access, role, on/off). Only *
 ## Crop tile
 
 Same tile and tools as **Arena Club** (order search, grades, status, tags), searching Metabase question **48181** ("crop"; `ARENA_CROP_CARD_ID` overrides). Adds an **Approve crop** row: approve the front + back crop tasks on the selected cards. Approve = admin's Verify crop → Approve: `PATCH /grades/crop/{scan grade id}` on each crop task's scan grade (front_scan / back_scan) with `{ status:"approved", notes:[{kind:"secondary", …}] }` under the TAG-BOT user's name. Sent 6 cards at a time with progress, one retry, and a failed list.
+
+### Orders pill (Crop tile)
+
+Under the tiles, **Orders · Metabase 48181** lists every order in the Crop question, grouped by order: earliest **due date** first (any column with "DUE" in its name; red = past due, orange = within 3 days), card count and card statuses. Click to pick, Shift+click for a range, **Select all**, then **Copy** (just the order numbers, one per line; or drag over the order numbers like normal text and Cmd/Ctrl+C) or **Search N orders** (fills the prompt and searches them all at once). The prompt also takes several orders pasted in any form: commas, spaces or one per line.
