@@ -86,6 +86,17 @@ async function ensureSchema() {
           created_by  text NOT NULL,
           created_at  timestamptz NOT NULL DEFAULT now()
         )`);
+      // Crop tile: per order, whether TAG-BOT approved crop on it and/or someone marked it as cropped by hand
+      await s.query(`
+        CREATE TABLE IF NOT EXISTS crop_marks (
+          order_number text PRIMARY KEY,
+          ran_at       timestamptz,
+          ran_by       text,
+          ran_cards    integer,
+          manual       boolean NOT NULL DEFAULT false,
+          manual_by    text,
+          manual_at    timestamptz
+        )`);
     })().catch((e) => {
       ready = null;
       throw e;

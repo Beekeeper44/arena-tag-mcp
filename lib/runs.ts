@@ -803,3 +803,24 @@ export async function runCropApprove(input: { text: string; item_ids: string[]; 
   await q(`UPDATE tag_runs SET status=$2, finished_at=now(), result=$3 WHERE id=$1`, [id, dry ? "dry_run_completed" : failed ? "partial" : "completed", JSON.stringify({ succeeded: cards.length - failed, failed })]);
   return { run_id: id, dry_run: dry, succeeded: cards.length - failed, failed, cards };
 }
+
+
+// ---------- Crop orders: "TAG-BOT ran crop" / "cropped by hand" marks per order ----------
+export async function cropMarks(orders?: string[]) {
+  const rows = orders?.length
+    ? await q<any>(`SELECT * FROM crop_marks WHERE order_number = ANY($1)`, [orders])
+    : await q<any>(`SELECT * FROM crop_marks`);
+  return Object.fromEntries(rows.map((r: any) => [r.order_number, { ran_at: r.ran_at, ran_by: r.ran_by, ran_cards: r.ran_cards, manual: r.manual, manual_by: r.manual_by, manual_at: r.manual_at }]));
+}
+export async function setCropMark(input: { orders: { order: string; cards?: number }[]; kind: "ran" | "manual"; on?: boolean; user: string }) {
+  const list = (input.orders || []).filter((o) => /^\d{4,15}$/.test(String(o.order)));
+  for (const o of list) {
+    if (input.kind === "ran")
+      await q(`INSERT INTO crop_marks (order_number, ran_at, ran_by, ran_cards) VALUES ($1, now(), $2, $3)
+               ON CONFLICT (order_number) DO UPDATE SET ran_at=now(), ran_by=$2, ran_cards=COALESCE(crop_marks.ran_cards,0)+COALESCE($3,0)`, [o.order, input.user, o.cards ?? null]);
+    else
+      await q(`INSERT INTO crop_marks (order_number, manual, manual_by, manual_at) VALUES ($1, $2, $3, now())
+               ON CONFLICT (order_number) DO UPDATE SET manual=$2, manual_by=$3, manual_at=now()`, [o.order, input.on !== false, input.user]);
+  }
+  return cropMarks(list.map((o) => o.order));
+}

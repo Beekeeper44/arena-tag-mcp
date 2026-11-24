@@ -3,7 +3,7 @@ import { config } from "@/lib/config";
 import { searchArchived } from "@/lib/archived";
 import { runArchivedStatus, undoArchivedStatus } from "@/lib/archived-status";
 import { type CardFilters, type PostFilters } from "@/lib/metabase";
-import { runSelection, runWatchSelection, runArenaSelection, runArchivedSelection, runOverallUpdate, runGradeUpdate, runCornersNone, undoRun, listRuns, runCropApprove } from "@/lib/runs";
+import { runSelection, runWatchSelection, runArenaSelection, runArchivedSelection, runOverallUpdate, runGradeUpdate, runCornersNone, undoRun, listRuns, runCropApprove, cropMarks, setCropMark } from "@/lib/runs";
 import { searchArena, useArenaVariant, listArenaOrders } from "@/lib/arena";
 import { openAdminSession, liveCards, liveWatches } from "@/lib/admin";
 import { listPrompts, addPrompt, renamePrompt, deletePrompt } from "@/lib/ui";
@@ -193,8 +193,14 @@ export async function POST(req: Request, ctx: Ctx) {
       case "corners":
         // Arena Club: every corner annotation → none (override + approve per corner, then label/slab rebuild)
         return json(await runCornersNone({ text: str("text"), item_ids: Array.isArray(body.item_ids) ? (body.item_ids as string[]) : [], dry_run: body.dry_run === true, skip_images: body.skip_images === true, parts: Array.isArray(body.parts) ? (body.parts as string[]) : undefined, user: u.name, as_admin_user_id: adminLoginFor(u) }));
-      case "arena-orders": // the tile's whole question, grouped by order (Crop → 48181)
-        return json(await listArenaOrders());
+      case "arena-orders": { // the tile's whole question, grouped by order (Crop → 48181), with each order's crop marks
+        const r = await listArenaOrders();
+        let marks: Record<string, unknown> = {};
+        try { marks = await cropMarks(r.orders.map((o) => o.order)); } catch { /* marks are extra */ }
+        return json({ ...r, marks });
+      }
+      case "crop-mark":
+        return forbid(u, "member") ?? json(await setCropMark({ orders: Array.isArray(body.orders) ? (body.orders as { order: string; cards?: number }[]) : [], kind: body.kind === "ran" ? "ran" : "manual", on: body.on !== false, user: u.name }));
       case "crop-approve":
         return forbid(u, "member") ?? json(await runCropApprove({ text: str("text"), item_ids: Array.isArray(body.item_ids) ? (body.item_ids as string[]) : [], dry_run: body.dry_run === true, user: u.name, as_admin_user_id: adminLoginFor(u) }));
       case "live": {
