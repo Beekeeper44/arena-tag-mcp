@@ -356,6 +356,8 @@ html.photoblack #info .pic2 figcaption{color:var(--dim)!important}
 #info .hz{display:block;overflow:hidden;border-radius:8px;cursor:zoom-in}
 #info .hz img{transition:transform .08s ease-out;will-change:transform}
 #info .pzoom{position:fixed;inset:0;z-index:50;background:rgba(0,0,0,.88);display:grid;grid-template-rows:auto 1fr;padding:14px;cursor:zoom-out}
+#info .pzpick{display:inline-block;padding:1px 8px;border-radius:999px;border:1px solid #9ca3af;color:#ddd;font-weight:800}
+#info .pzpick.on{background:#16a34a;border-color:#16a34a;color:#fff}
 #info .pzlab{color:#ddd;font-size:12px;text-align:center;margin-bottom:8px}
 #info .pzwrap{justify-self:center;align-self:center;max-width:94vw;max-height:calc(100vh - 70px);background:#fff;padding:12px;box-sizing:border-box}
 html.photoblack #info .pzwrap{background:#0b0f0c}
@@ -2254,6 +2256,7 @@ async function cropStatusLoad(rows){
     for(const [id,v] of Object.entries(r||{})){ const c=S.matched.find(x=>x.item_id===id); if(!c||v.error) continue;
       c.crop_state=v.done?"done":(v.front==="approved"||v.back==="approved")?"part":"todo"; c.crop_sides=v; } }
   render();
+  if(OP.loaded&&$("#ordersPanel")&&!$("#ordersPanel").hidden) ordersRender(); // Orders list "N/M approved" follows admin straight away
 }
 // whole-card check (server measures the space on each side of the photo): flags cards that run into the edge or sit off-centre
 const PCHK={};
@@ -2436,9 +2439,10 @@ function showInfo(id){
   const go=k=>{ const t=list[pos+k]; if(t) showInfo(t.item_id); };
   $("#infoPrev").onclick=()=>go(-1); $("#infoNext").onclick=()=>go(1);
   // select / deselect this card without leaving the popup (X); the tiles and counts behind update
-  const toggleSel=()=>{ if(S.phase!=="review") return; S.selected.has(r.item_id)?S.selected.delete(r.item_id):S.selected.add(r.item_id); render(); showInfo(r.item_id); };
+  const toggleSel=()=>{ if(S.phase!=="review") return; keepZoom(); S.selected.has(r.item_id)?S.selected.delete(r.item_id):S.selected.add(r.item_id); render(); showInfo(r.item_id); };
   const sb=$("#infoSel"); if(sb) sb.onclick=toggleSel;
-  const toggleSide=sd=>{ if(S.phase!=="review"||ARENA_V!=="crop") return; pickSide(r.item_id,sd); render(); showInfo(r.item_id); };
+  const keepZoom=()=>{ const z=d.querySelector(".pzoom"); window.__zoomKeep=z?z.dataset.side:null; };
+  const toggleSide=sd=>{ if(S.phase!=="review"||ARENA_V!=="crop") return; keepZoom(); pickSide(r.item_id,sd); render(); showInfo(r.item_id); };
   d.querySelectorAll(".sidepick").forEach(b=>b.onclick=()=>toggleSide(b.dataset.side));
   d.classList.toggle("photodark",PHOTO_DARK);
   const toggleBg=()=>togglePhotoBg();
@@ -2458,9 +2462,10 @@ function showInfo(id){
     if(old){ const same=old.dataset.side===want; old.remove(); if(same) return; }
     const u=i===0?(r.img_front||r.img):r.img_back; if(!u) return;
     const z=document.createElement("div"); z.className="pzoom"; z.dataset.side=want;
-    z.innerHTML=`<div class="pzlab">${i===0?"Front":"Back"} · <b>${i===0?"C":"B"}</b> or Esc to close · hover to magnify</div><div class="pzwrap"><img src="${esc(u)}" alt="${want} of the card" referrerpolicy="no-referrer"></div>`;
+    z.innerHTML=`<div class="pzlab">${i===0?"Front":"Back"} · <b>${i===0?"C":"B"}</b> or Esc to close · hover to magnify${typeof ARENA_V!=="undefined"&&ARENA_V==="crop"&&S.phase==="review"?(()=>{ const sd=i===0?"front":"back", on=sidesOf(r.item_id)[sd]&&S.selected.has(r.item_id); return ` · <span class="pzpick${on?" on":""}">${on?`✓ Approve ${sd}`:`Skip ${sd}`} (${i===0?"V":"N"})</span>`; })():""}</div><div class="pzwrap"><img src="${esc(u)}" alt="${want} of the card" referrerpolicy="no-referrer"></div>`;
     z.onclick=()=>z.remove(); d.appendChild(z); hoverZoom(z.querySelector(".pzwrap")); };
   d.querySelectorAll("#info .pic2 figure a").forEach(a=>hoverZoom(a));
+  if(window.__zoomKeep){ const sd=window.__zoomKeep; window.__zoomKeep=null; zoomPhoto(sd==="front"?0:1); } // reopen the zoom that was showing
   const esc0=d.oncancel; d.oncancel=e=>{ const z=d.querySelector(".pzoom"); if(z){ e.preventDefault(); z.remove(); } else if(esc0) esc0(e); };
   $("#infoNext").focus({preventScroll:true});
 }
