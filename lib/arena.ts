@@ -25,7 +25,7 @@ const cardId = () => {
   return Number(process.env.ARENA_METABASE_CARD_ID || 45739);
 };
 async function mb(path: string, init: RequestInit = {}) {
-  return fetch(`${config.metabaseHost()}${path}`, { ...init, headers: { "x-api-key": config.metabaseApiKey(), ...(init.headers || {}) } });
+  return fetch(`${config.metabaseHost()}${path}`, { cache: "no-store", ...init, headers: { "x-api-key": config.metabaseApiKey(), ...(init.headers || {}) } });
 }
 
 export async function params(id: number = cardId()): Promise<Param[]> {
@@ -59,9 +59,9 @@ export async function run(param: Param, value: string, id: number = cardId()) {
 /** Run a question with any parameters (none = every row). */
 export async function runCard(id: number, parameters: unknown[] = []) {
   const path = `/api/card/${id}/query/json`;
-  let res = await mb(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ parameters, format_rows: false }) });
+  let res = await mb(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ parameters, format_rows: false, ignore_cache: true }) });
   if (!res.ok && res.status >= 400 && res.status < 500) {
-    res = await mb(path, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ parameters: JSON.stringify(parameters), format_rows: "false" }).toString() });
+    res = await mb(path, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ parameters: JSON.stringify(parameters), format_rows: "false", ignore_cache: "true" }).toString() });
   }
   if (!res.ok) throw new Error(`Metabase question ${id} failed: ${res.status} ${(await res.text()).slice(0, 300)}`);
   const data = await res.json();

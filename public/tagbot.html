@@ -418,6 +418,8 @@ html.photoblack #info .fitnote .pdet{color:var(--dim)}
 .opanel td{padding:6px 8px;border-top:1px solid var(--line);white-space:nowrap}
 .opanel .ocrop{white-space:nowrap}
 .opanel .cmark{display:inline-block;margin-right:8px;padding:0 8px;border-radius:999px;border:1px solid var(--go);color:var(--go);font-weight:800;font-size:11px}
+.opanel .cmark.cdone{background:#22c55e;color:#052e12;border-color:#22c55e}
+.opanel .cmark.cpart{color:#facc15;border-color:#facc15}
 .opanel .cman{font-size:12px;color:var(--dim);cursor:pointer}
 .opanel .cman input{vertical-align:-2px;accent-color:var(--go)}
 .opanel tr.on td{background:color-mix(in srgb,var(--go) 16%,transparent)}
@@ -1257,7 +1259,12 @@ async function find(text){
   if(ARCHK(S.kind)&&res.card_id){ const b=document.querySelector("#source b"); if(b) b.textContent=`${res.view_label||VIEWS[S.view]} · ${DEMO?"Demo":"Live"} · Metabase ${res.card_id}, fresh every search`; }
   if(S.kind==="arena"){ S.av=ARENA_V; }
   const wantQ=ARENA_V==="customer"?47455:ARENA_V==="crop"?48181:45739;
-  if(ARENA_V==="crop") setTimeout(()=>{ if(S){ photoChecks(S.matched); cropStatusLoad(S.matched); } },0); if(DEMO&&res.card_id) res.card_id=wantQ; // demo data stands in for every Arena question
+  if(ARENA_V==="crop") setTimeout(()=>{ if(S){ photoChecks(S.matched,true); cropStatusLoad(S.matched); } },0); // every search re-reads both
+  if(ARENA_V==="crop"&&OP.loaded&&OP.q==="crop"){ // Metabase just said these orders have no cards left: drop them from the list
+    const asked=(String(S.text||"").match(/\d{6,12}/g)||[]), have=new Set(S.matched.map(c=>String(c.order_number)));
+    const gone=asked.filter(o=>!have.has(o)&&OP.orders.some(x=>x.order===o));
+    if(gone.length){ OP.orders=OP.orders.filter(x=>!gone.includes(x.order)); gone.forEach(o=>OP.sel.delete(o)); OP.gone=(OP.gone||[]).concat(gone); if(!$("#ordersPanel").hidden) ordersRender(); }
+  } if(DEMO&&res.card_id) res.card_id=wantQ; // demo data stands in for every Arena question
   if(S.kind==="arena"&&res.card_id){ const b=document.querySelector("#source b"); if(b) b.textContent=`${DEMO?"Demo":"Live"} · Metabase ${res.card_id}${res.check_card_id?` + Overall Check ${res.check_card_id}`:""}, fresh every search`;
     if(Number(res.card_id)!==wantQ) $("#srcMsg").insertAdjacentHTML("afterbegin",`<div class="warn-txt small">Arena Club is reading question ${esc(String(res.card_id))}, not 45739 — ARENA_METABASE_CARD_ID is set in Vercel. Delete it (or set it to 45739) and redeploy.</div>`); }
   if(S.kind==="arena") refreshLive();
@@ -1476,6 +1483,12 @@ async function gApply(){
     }catch(e){ return failAll(part,e); } });
   draw();
   if(S.kind==="arena"&&!dry){ try{ await liveDates(sel); render(); draw(); }catch{} } // tiles show what admin has now
+  if(S.kind==="arena"&&!dry&&typeof ARENA_V!=="undefined"&&ARENA_V==="crop"){
+    try{ await cropStatusLoad(S.matched); }catch{}                       // approved crop / front / back, straight from admin
+    if(OP.loaded&&OP.q==="crop"){ ordersLoad();                         // orders list from Metabase 48181 again…
+      // …and again in 1 and 3 minutes: Metabase reads the warehouse, which picks up admin's approvals a little later
+      clearTimeout(OP.t1); clearTimeout(OP.t2); OP.t1=setTimeout(()=>ordersLoad(),60e3); OP.t2=setTimeout(()=>ordersLoad(),180e3); }
+  }
 }
 function restorePanel(locked,key){
   const busy=key==="archive"?"archived":"pending_rescan", cur=(S.rs||{})[key]||"";
@@ -1880,6 +1893,17 @@ async function refreshLive(){
   note.innerHTML=base+`<div class="dim small" style="margin-top:4px">✓ Grades checked live in admin${changed?` · <b class="ook">${changed} updated</b> (Metabase hadn't caught up yet)`:" · all match"}${auth?` · ${auth} authentic`:""}${rechk?` · <b class="orechk">${rechk} need${rechk===1?"s":""} a recheck</b> (subgrades changed since the Overall Check ran)`:""}</div>`;
   if(S.phase==="review") recompute(false); else render();
   const lb=$("#liveBtn"); if(lb){ lb.disabled=false; lb.textContent="↻ Refresh from admin"; }
+  if(typeof ARENA_V!=="undefined"&&ARENA_V==="crop"&&S===mine) await cropDoneSweep(); // Crop tile: crop status + Orders list too
+}
+// Crop tile, after "Refresh from admin": read each card's crop from admin; orders whose cards are all approved come off the
+// Orders list right away (Metabase drops them later), then the list is re-read from Metabase 48181
+async function cropDoneSweep(){
+  try{ await cropStatusLoad(S.matched); }catch{}
+  const by={}; S.matched.forEach(c=>{ const o=String(c.order_number||""); if(!o) return; (by[o]=by[o]||[]).push(c); });
+  const done=Object.entries(by).filter(([,cs])=>cs.length&&cs.every(c=>c.crop_state==="done")).map(([o])=>o);
+  if(done.length){ OP.gone=[...new Set([...(OP.gone||[]),...done])]; OP.orders=OP.orders.filter(x=>!done.includes(x.order)); done.forEach(o=>OP.sel.delete(o)); }
+  if(OP.loaded&&OP.q==="crop") await ordersLoad(); else if(!$("#ordersPanel").hidden) ordersRender();
+  const n=$("#srcMsg"); if(n&&done.length) n.insertAdjacentHTML("beforeend",`<div class="small" style="color:#22c55e;margin-top:4px">✓ Crop approved on every card of ${done.length} order${done.length===1?"":"s"} (${esc(done.join(", "))}): taken off the Orders list</div>`);
 }
 function rmChips(locked){
   const counts=new Map(); for(const r of S.matched) if(r.tag){const t=r.tag.toLowerCase(); counts.set(t,(counts.get(t)||0)+1);}
@@ -1964,7 +1988,7 @@ function renderInner(){
           <option value="evlow"${S.sort==="evlow"?" selected":""}>EV: low → high</option></select>
         ${S.kind==="arena"?`
         <button type="button" class="btn only75${S.only75?" on":""}" id="only75" aria-pressed="${!!S.only75}">${S.only75?"✓ ":""}Only ≤ 7.5 / auth</button>
-        <button type="button" class="btn" id="liveBtn" title="Re-read every card's grades, slab and tag straight from admin (Metabase updates on a delay)">↻ Refresh from admin</button>`:ARCHK(S.kind)||S.kind==="cards"||S.kind==="watches"?`
+        <button type="button" class="btn" id="liveBtn" title="Re-read every card's grades, slab and tag straight from admin (Metabase updates on a delay). On the Crop tile it also re-reads each card's crop and takes finished orders off the Orders list">↻ Refresh from admin</button>`:ARCHK(S.kind)||S.kind==="cards"||S.kind==="watches"?`
         <button type="button" class="btn" id="archLiveBtn" title="Re-read every card's status, authentication status, tag and photo straight from admin (Metabase updates on a delay)">↻ Refresh from admin</button>`:""}</div>
       ${locked?"":`<div class="selbar"><button class="btn link" type="button" id="all">Select all</button><button class="btn link" type="button" id="none">Clear</button></div>`}
     </div>
@@ -2219,7 +2243,7 @@ function tileFit(img,id){ const f=photoFit(img.naturalWidth,img.naturalHeight); 
   if(!f.ok){ const b=document.createElement("span"); b.className="fitbadge"; b.title=`Photo isn't 2.5 × 3.5 (${f.w}×${f.h} px, ratio ${f.r.toFixed(3)}): ${f.why}`; b.textContent="⚠ not 2.5×3.5"; art.appendChild(b); } }
 // which cards already have their crop approved (front + back), read from admin so it holds across sessions and people
 async function cropStatusLoad(rows){
-  const ids=rows.map(r=>r.item_id);
+  const ids=rows.map(r=>r.item_id); rows.forEach(r=>{ r.crop_state=null; r.crop_sides=null; }); // start clean: show only what admin says now
   for(let i=0;i<ids.length;i+=50){ let r; try{ r=await api("crop-status",{item_ids:ids.slice(i,i+50)}); }catch{ break; }
     for(const [id,v] of Object.entries(r||{})){ const c=S.matched.find(x=>x.item_id===id); if(!c||v.error) continue;
       c.crop_state=v.done?"done":(v.front==="approved"||v.back==="approved")?"part":"todo"; c.crop_sides=v; } }
@@ -2227,9 +2251,12 @@ async function cropStatusLoad(rows){
 }
 // whole-card check (server measures the space on each side of the photo): flags cards that run into the edge or sit off-centre
 const PCHK={};
-async function photoChecks(rows){
-  const urls=[...new Set(rows.flatMap(r=>[r.img_front,r.img_back]).filter(u=>u&&!(u in PCHK)))];
-  for(let i=0;i<urls.length;i+=40){ try{ Object.assign(PCHK,await api("photo-check",{urls:urls.slice(i,i+40)})); }catch{ break; } }
+async function photoChecks(rows,fresh){
+  const all=[...new Set(rows.flatMap(r=>[r.img_front,r.img_back]).filter(Boolean))];
+  if(fresh) all.forEach(u=>{ delete PCHK[u]; }); // re-searched: check the photos again (they may have been re-cropped)
+  rows.forEach(r=>{ r.photo_issue=null; r.photo_level=null; r.photo_checked=false; });
+  const urls=all.filter(u=>!(u in PCHK));
+  for(let i=0;i<urls.length;i+=40){ try{ Object.assign(PCHK,await api("photo-check",{urls:urls.slice(i,i+40),fresh:!!fresh})); }catch{ break; } }
   for(const r of rows){ const ck=[["Front",r.img_front],["Back",r.img_back]].map(([s,u])=>[s,u&&PCHK[u]]).filter(([,c])=>c&&!c.ok);
     r.photo_issue=ck.map(([s,c])=>`${s}: ${c.issues.join("; ")}`).join(" · ")||null;
     r.photo_level=ck.some(([,c])=>(c.level||"cut")==="cut")?"cut":ck.length?"close":null;
@@ -3018,8 +3045,11 @@ var CROP=false;
 const OP={orders:[],sel:new Set(),last:-1,loaded:false,q:null,marks:{}};
 // Crop column: "✓ TAG-BOT" when Approve crop ran on the order (who / when / how many cards), plus a "manual" tick for orders cropped by hand
 function cropCell(order){ const m=OP.marks[order]||{};
+  const mine=(S&&S.matched||[]).filter(c=>String(c.order_number)===String(order)&&c.crop_state);
+  const allDone=mine.length&&mine.every(c=>c.crop_state==="done"), doneN=mine.filter(c=>c.crop_state==="done").length;
+  const live=mine.length?(allDone?`<span class="cmark cdone" title="Admin: every card's crop is approved (Metabase can lag behind)">✓ all approved</span>`:`<span class="cmark cpart" title="Admin: cards with front + back approved">${doneN}/${mine.length} approved</span>`):"";
   const ran=m.ran_at?`<span class="cmark" title="TAG-BOT approved crop${m.ran_cards?` on ${m.ran_cards} card${m.ran_cards===1?"":"s"}`:""} · ${esc(m.ran_by||"")} · ${esc(new Date(m.ran_at).toLocaleString())}">✓ TAG-BOT</span>`:"";
-  return `${ran}<label class="cman" title="${m.manual?`marked by ${esc(m.manual_by||"")} · ${esc(m.manual_at?new Date(m.manual_at).toLocaleString():"")}`:"Tick if this order was cropped by hand"}"><input type="checkbox" data-cman="${esc(order)}" ${m.manual?"checked":""}> manual</label>`; }
+  return `${live}${ran}<label class="cman" title="${m.manual?`marked by ${esc(m.manual_by||"")} · ${esc(m.manual_at?new Date(m.manual_at).toLocaleString():"")}`:"Tick if this order was cropped by hand"}"><input type="checkbox" data-cman="${esc(order)}" ${m.manual?"checked":""}> manual</label>`; }
 async function cropMarkRan(ids){ // after Approve crop: mark each order it touched
   const by={}; ids.forEach(id=>{ const c=S.matched.find(x=>x.item_id===id); if(c&&c.order_number) by[c.order_number]=(by[c.order_number]||0)+1; });
   const orders=Object.entries(by).map(([order,cards])=>({order,cards})); if(!orders.length) return;
@@ -3033,7 +3063,7 @@ const fmtDue=d=>{ if(!d) return "—"; const t=dueDay(d); return isNaN(t)?String
 const dueCls=d=>{ if(!d) return ""; const t=dueDay(d), today=new Date(); today.setHours(0,0,0,0); const days=Math.round((t-today)/864e5); return days<0?"due-late":days<=3?"due-soon":""; };
 function ordersRender(){
   const p=$("#ordersPanel"), o=OP.orders, n=OP.sel.size, nums=()=>o.filter(x=>OP.sel.has(x.order)).map(x=>x.order), txt=()=>"orders "+nums().join(", ");
-  p.innerHTML=`<div class="otools"><b>${o.length} order${o.length===1?"":"s"}</b> <span class="dim small">${OP.hasDue?"soonest due date first":"no due date column in the question, so sorted by order number"} · drag over the order numbers to highlight them and Cmd/Ctrl+C to copy, or click/drag the other columns to pick rows</span>
+  p.innerHTML=`<div class="otools"><b>${o.length} order${o.length===1?"":"s"}</b>${(OP.gone||[]).length?` <span class="small" style="color:#22c55e" title="${esc(OP.gone.join(", "))}">· ${OP.gone.length} done (crop approved) taken off</span>`:""} <span class="dim small">${OP.hasDue?"soonest due date first":"no due date column in the question, so sorted by order number"} · drag over the order numbers to highlight them and Cmd/Ctrl+C to copy, or click/drag the other columns to pick rows</span>
     <span style="margin-left:auto;display:flex;gap:6px;flex-wrap:wrap;align-items:center">${OP.at?`<span class="dim small">read ${esc(OP.at.toLocaleTimeString([], {hour:"numeric",minute:"2-digit"}))}</span>`:""}<button type="button" class="btn" id="oRefresh" title="Read Metabase 48181 again: orders, due dates, card counts and crop marks">↻ Refresh</button><button type="button" class="btn link" id="oAll">Select all</button><button type="button" class="btn link" id="oNone">Clear</button>
     <button type="button" class="btn" id="oCopy" ${n?"":"disabled"}>Copy ${n||""}</button><button type="button" class="btn primary" id="oFind" ${n?"":"disabled"}>Search ${n||""} order${n===1?"":"s"}</button></span></div>
     <div class="olist"><table><thead><tr><th></th><th>Order</th><th>Customer</th><th title="red = past due · orange = due within 3 days">Due</th><th>Cards</th><th>Status</th><th title="TAG-BOT ran Approve crop on this order, and/or tick it as cropped by hand">Crop</th></tr></thead><tbody>${o.map((x,i)=>`<tr data-oi="${i}" class="${OP.sel.has(x.order)?"on":""}"><td><input type="checkbox" tabindex="-1" ${OP.sel.has(x.order)?"checked":""} aria-label="Pick order ${esc(x.order)}"></td><td class="onum"><b>${esc(x.order)}</b></td><td class="dim">${esc(x.customer||"—")}</td><td class="${dueCls(x.due)}">${esc(fmtDue(x.due))}</td><td>${x.cards}</td><td class="dim small">${esc(Object.entries(x.statuses).map(([k,v])=>`${k}${v>1?" ×"+v:""}`).join(" · "))}</td><td class="ocrop">${cropCell(x.order)}</td></tr>`).join("")}</tbody></table></div>`;
@@ -3069,8 +3099,8 @@ document.addEventListener("copy",e=>{ const sel=document.getSelection(); if(!sel
 async function ordersLoad(){
   const p=$("#ordersPanel"), first=!OP.loaded||OP.q!==ARENA_V;
   if(first) p.innerHTML=`<div class="dim small"><span class="spin"></span> Reading every order in Metabase 48181…</div>`;
-  else { const b=$("#oRefresh"); if(b){ b.disabled=true; b.innerHTML=`<span class="spin"></span> Refreshing…`; } }
-  try{ const r=await api("arena-orders",{}); OP.orders=r.orders||[]; OP.hasDue=!!r.has_due; OP.marks=r.marks||{}; OP.loaded=true; OP.q=ARENA_V; OP.at=new Date();
+  else { const b=$("#oRefresh"); if(b){ b.disabled=true; b.innerHTML=`<span class="spin"></span> Reading Metabase…`; } }
+  try{ const r=await api("arena-orders",{}); OP.orders=(r.orders||[]).filter(x=>!(OP.gone||[]).includes(x.order)); OP.hasDue=!!r.has_due; OP.marks=r.marks||{}; OP.loaded=true; OP.q=ARENA_V; OP.at=new Date();
     const still=new Set(OP.orders.map(o=>o.order)); OP.sel=new Set([...OP.sel].filter(o=>still.has(o))); // keep picks that are still in the list
     ordersRender();
     if(!first&&S&&S.matched&&typeof ARENA_V!=="undefined"&&ARENA_V==="crop") cropStatusLoad(S.matched); } // Refresh also re-reads crop ✓ / to do on the cards shown

@@ -19,8 +19,8 @@ const UNEVEN = 0.05; // sides more than 5% apart = off-centre
 const LOOSE = 0.025; // more than 2.5% background on a side = crop not tight (fail)
 const ROOMY = 0.015; // 1.5–2.5% = check
 
-export async function checkPhoto(url: string): Promise<PhotoCheck> {
-  const hit = cache.get(url); if (hit) return hit;
+export async function checkPhoto(url: string, fresh = false): Promise<PhotoCheck> {
+  const hit = fresh ? undefined : cache.get(url); if (hit) return hit;
   const out: PhotoCheck = { url, w: 0, h: 0, ok: true, level: "ok", margins: { top: 0, bottom: 0, left: 0, right: 0 }, issues: [] };
   try {
     if (!ALLOWED.test(url)) throw new Error("not an Arena photo address");
@@ -40,8 +40,8 @@ export function analyzeJpeg(buf: Buffer): PhotoCheck {
   }
   return out;
 }
-export async function checkPhotos(urls: string[]) {
+export async function checkPhotos(urls: string[], fresh = false) {
   const list = [...new Set(urls.filter(Boolean))].slice(0, 60), out: Record<string, PhotoCheck> = {};
-  let i = 0; await Promise.all(Array.from({ length: 6 }, async () => { while (i < list.length) { const u = list[i++]; out[u] = await checkPhoto(u); } }));
+  let i = 0; await Promise.all(Array.from({ length: 6 }, async () => { while (i < list.length) { const u = list[i++]; out[u] = await checkPhoto(u, fresh); } }));
   return out;
 }

@@ -63,6 +63,8 @@ export async function GET(req: Request, ctx: Ctx) {
   }
 }
 
+export const dynamic = "force-dynamic"; // never serve a cached answer (Metabase, admin)
+
 export async function POST(req: Request, ctx: Ctx) {
   const { action } = await ctx.params;
   let body: Record<string, unknown> = {};
@@ -201,7 +203,7 @@ export async function POST(req: Request, ctx: Ctx) {
         return json({ ...r, marks });
       }
       case "photo-check": // is the whole card in each photo (margins on all four sides)?
-        return json(await checkPhotos(Array.isArray(body.urls) ? (body.urls as string[]) : []));
+        return json(await checkPhotos(Array.isArray(body.urls) ? (body.urls as string[]) : [], body.fresh === true));
       case "crop-status": // front / back crop approved? per card, from admin
         return json(await cropStatus({ item_ids: Array.isArray(body.item_ids) ? (body.item_ids as string[]) : [], as_admin_user_id: adminLoginFor(u) }));
       case "crop-mark":
