@@ -127,6 +127,7 @@ h1 span{color:var(--go)}
 @media (prefers-color-scheme: dark){:root:not([data-theme="light"]) .only75{color:#ffd400}}
 :root[data-theme="dark"] .only75{color:#ffd400}
 .croptodoBtn{font-size:12.5px;padding:6px 10px;border-color:#22c55e;color:#22c55e;margin-top:6px}
+.selbar .croptodoBtn+.croptodoBtn{margin-left:6px}
 .croptodoBtn.on{background:#22c55e;color:#052e12!important;font-weight:800}
 .only75.on{background:#ffd400;color:#1a1a00!important;font-weight:800}
 .meta.am b{color:var(--text)}
@@ -1291,7 +1292,7 @@ const arenaStatusRow=r=>{ const auth=String(r.auth_status||"").toLowerCase();
   const x=(html,cond)=>cond?html.replace('class="ast','class="ast strk'):html;
   const statusPill=r.status?x(stHtml(r.status),(p.archive==="remove"&&st==="archived")||(p.pending_rescan==="remove"&&st==="pending_rescan")):"";
   const bits=[statusPill, r.crop_state==="done"||(!r.crop_state&&r.crop_ok&&r.crop_ok.length)?`<span class="ast cropok" title="Crop approved in admin (front + back)">approved crop</span>`
-      :r.crop_state==="part"?`<span class="ast croppart" title="Crop: front ${esc(r.crop_sides.front||"—")} · back ${esc(r.crop_sides.back||"—")}">${r.crop_sides.front==="approved"?"approved front":"approved back"}</span>`
+      :r.crop_state==="part"?`<span class="ast croppart" title="Crop: front ${esc(r.crop_sides.front||"—")} · back ${esc(r.crop_sides.back||"—")}">${r.crop_sides.front==="approved"?"approved front · back to do":"approved back · front to do"}</span>`
       :r.crop_state==="todo"?`<span class="ast croptodo" title="Crop not approved yet">crop to do</span>`:"",
       (()=>{ const sd=sidesOf(r.item_id); return typeof ARENA_V!=="undefined"&&ARENA_V==="crop"&&!(sd.front&&sd.back)?`<span class="ast croppick" title="Approve crop will do only this side">${sd.front?"approve front only":sd.back?"approve back only":"crop: skip"}</span>`:""; })(),
     auth&&auth!=="none"?x(`<span class="ast st-not_accepted st-bad">${esc(isNa?"Not accepted":r.auth_status)}</span>`,p.not_accepted==="remove"&&isNa):"",
@@ -1325,6 +1326,8 @@ const gParts=()=>{ const g=gPlan(); return [...(g.tsubs.has("corners")?["corner"
 function gPlan(){ return S.gp||(S.gp={overall:false,clear:false,task:false,subs:new Set(),tsubs:new Set()}); }
 function gTaskOn(){ const g=gPlan(); return g.task&&[...g.tsubs].some(k=>G_TASK_READY.has(k)); }
 function gActive(){ const g=gPlan(); return cropOn()||g.overall||(g.clear&&g.subs.size>0)||gTaskOn(); }
+const sideDone=(r,sd)=>!!(r.crop_sides&&r.crop_sides[sd]==="approved");
+const sideTodo=(r,sd)=>!!r.crop_state&&r.crop_state!=="done"&&!sideDone(r,sd);
 const sidesOf=id=>{ const p=(S&&S.cropPick||{})[id]; return {front:p?p.front!==false:true, back:p?p.back!==false:true}; };
 function pickSide(id,side){ S.cropPick=S.cropPick||{}; const cur=sidesOf(id); cur[side]=!cur[side]; S.cropPick[id]=cur;
   if((cur.front||cur.back)&&!S.selected.has(id)) S.selected.add(id); }
@@ -1335,7 +1338,8 @@ function cropRow(locked){
     <span class="sagrp"><button type="button" class="sabtn${S.cropOn?" on":""}" id="cropApprove" aria-pressed="${!!S.cropOn}" ${locked?"disabled":""}>Approve crop</button></span>
     <span class="dim small">front + back crop tasks, under your name · runs first when you click <b>Apply to admin</b></span>
     ${(()=>{ const m=S.matched.filter(r=>r.crop_state), done=m.filter(r=>r.crop_state==="done").length, todo=m.length-done;
-      return m.length?`<span class="small"><b style="color:#22c55e">${done} approved</b> · <b>${todo} to do</b>${todo?` <button type="button" class="btn link" id="cropTodo" ${locked?"disabled":""}>Select just the ${todo} to do</button>`:""}</span>`:""; })()}</div>`;
+      const fo=m.filter(r=>r.crop_state==="part"&&sideDone(r,"front")).length, bo=m.filter(r=>r.crop_state==="part"&&sideDone(r,"back")).length, none=m.filter(r=>r.crop_state==="todo").length;
+      return m.length?`<span class="small"><b style="color:#22c55e">${done} both approved</b> · <b>${todo} to do</b> <span class="dim">(${none} neither · ${fo} back to do · ${bo} front to do)</span>${todo?` <button type="button" class="btn link" id="cropTodo" ${locked?"disabled":""}>Select just the ${todo} to do</button>`:""}</span>`:""; })()}</div>`;
 }
 async function cropApprove(){
   const sel=S.rows.filter(r=>S.selected.has(r.item_id)), N=sel.length; if(!N) return;
@@ -1768,7 +1772,7 @@ $("#appr").onchange=()=>{ try{ localStorage.setItem("tb_approve",$("#appr").chec
 const isLow=r=>!!(r&&(r.authentic||(r.grade_num!=null&&Number(r.grade_num)<=7.5)));
 function arenaView(rows){
   if(!S) return rows;
-  if(S.cropTodoOnly&&typeof ARENA_V!=="undefined"&&ARENA_V==="crop") rows=rows.filter(r=>r.crop_state!=="done"); // "Only crop to do"
+  if(S.cropTodoOnly&&typeof ARENA_V!=="undefined"&&ARENA_V==="crop") rows=rows.filter(r=>S.cropTodoOnly==="front"?sideTodo(r,"front"):S.cropTodoOnly==="back"?sideTodo(r,"back"):r.crop_state!=="done"); // "Only crop to do" (both / front / back)
   const ev=r=>Number(r.ev)||0;
   if(S.sort==="status"){ const out=(S.kind==="arena"&&S.only75?rows.filter(isLow):rows.slice()); const k=r=>String(r.status||"~");
     out.sort((a,b)=>k(a).localeCompare(k(b))||String(a.auth_status||"").localeCompare(String(b.auth_status||""))); return out; } // A→Z, then auth; no status last
@@ -1997,7 +2001,9 @@ function renderInner(){
         <button type="button" class="btn" id="archLiveBtn" title="Re-read every card's status, authentication status, tag and photo straight from admin (Metabase updates on a delay)">↻ Refresh from admin</button>`:""}</div>
       ${locked?"":`<div class="selbar"><button class="btn link" type="button" id="all">Select all</button><button class="btn link" type="button" id="none">Clear</button></div>`}
       ${S.kind==="arena"&&typeof ARENA_V!=="undefined"&&ARENA_V==="crop"?(()=>{ const n=S.matched.filter(r=>r.crop_state&&r.crop_state!=="done").length, known=S.matched.some(r=>r.crop_state);
-        return `<div class="selbar"><button type="button" class="btn croptodoBtn${S.cropTodoOnly?" on":""}" id="cropTodoOnly" aria-pressed="${!!S.cropTodoOnly}" ${known?"":"disabled title=\"Reading crop status from admin…\""}>${S.cropTodoOnly?"✓ ":""}Only crop to do${known?` (${n})`:""}</button></div>`; })():""}
+        const nf=S.matched.filter(r=>sideTodo(r,"front")).length, nb=S.matched.filter(r=>sideTodo(r,"back")).length, dis=known?"":"disabled title=\"Reading crop status from admin…\"";
+        const b=(k,label,c)=>`<button type="button" class="btn croptodoBtn${S.cropTodoOnly===k?" on":""}" data-ctodo="${k}" aria-pressed="${S.cropTodoOnly===k}" ${dis}>${S.cropTodoOnly===k?"✓ ":""}${label}${known?` (${c})`:""}</button>`;
+        return `<div class="selbar">${b(true,"Only crop to do",n)}${b("front","Front to do",nf)}${b("back","Back to do",nb)}</div>`; })():""}
     </div>
     ${ARCHK(S.kind)||S.kind==="arena"||S.kind==="cards"?`<div class="sactwrap">${statusActions(locked)}</div>`:""}
     ${S.missing&&S.missing.length&&!locked?`<div class="warn"><b>Nothing found for ${esc(S.missing.join(", "))}.</b> ${S.missing.length<[].concat(S.filters.player_name).length?"Showing only the names that matched.":"Nothing else was selected."}</div>`:""}
@@ -2613,7 +2619,7 @@ function bindSummary(){
   const lb=$("#liveBtn"); if(lb) lb.onclick=async()=>{ lb.disabled=true; lb.textContent="Refreshing…"; await refreshLive(); };
   const alb=$("#archLiveBtn"); if(alb) alb.onclick=async()=>{ alb.disabled=true; alb.textContent="Refreshing…"; await refreshArchived(); };
   const o75=$("#only75"); if(o75) o75.onclick=()=>{ S.only75=!S.only75; recompute(true); };
-  const ctd2=$("#cropTodoOnly"); if(ctd2) ctd2.onclick=()=>{ S.cropTodoOnly=!S.cropTodoOnly; recompute(true); };
+  document.querySelectorAll("[data-ctodo]").forEach(b=>b.onclick=()=>{ const k=b.dataset.ctodo==="true"?true:b.dataset.ctodo; S.cropTodoOnly=S.cropTodoOnly===k?false:k; recompute(true); });
   // Corners → none: override + approve each corner with every annotation at none (admin recalculates Corners)
 
   document.querySelectorAll(".sabtn").forEach(b=>b.onclick=()=>{ const k=b.dataset.sk, op=b.dataset.sop; S.plan=S.plan||{};
