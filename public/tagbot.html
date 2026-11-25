@@ -126,6 +126,8 @@ h1 span{color:var(--go)}
 .only75{font-size:12.5px;padding:6px 10px;border-color:#ffd400;color:#b38f00}
 @media (prefers-color-scheme: dark){:root:not([data-theme="light"]) .only75{color:#ffd400}}
 :root[data-theme="dark"] .only75{color:#ffd400}
+.croptodoBtn{font-size:12.5px;padding:6px 10px;border-color:#22c55e;color:#22c55e;margin-top:6px}
+.croptodoBtn.on{background:#22c55e;color:#052e12!important;font-weight:800}
 .only75.on{background:#ffd400;color:#1a1a00!important;font-weight:800}
 .meta.am b{color:var(--text)}
 .arow{display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:12.5px;color:var(--dim);margin-top:5px}
@@ -1764,6 +1766,7 @@ $("#appr").onchange=()=>{ try{ localStorage.setItem("tb_approve",$("#appr").chec
 const isLow=r=>!!(r&&(r.authentic||(r.grade_num!=null&&Number(r.grade_num)<=7.5)));
 function arenaView(rows){
   if(!S) return rows;
+  if(S.cropTodoOnly&&typeof ARENA_V!=="undefined"&&ARENA_V==="crop") rows=rows.filter(r=>r.crop_state!=="done"); // "Only crop to do"
   const ev=r=>Number(r.ev)||0;
   if(S.sort==="status"){ const out=(S.kind==="arena"&&S.only75?rows.filter(isLow):rows.slice()); const k=r=>String(r.status||"~");
     out.sort((a,b)=>k(a).localeCompare(k(b))||String(a.auth_status||"").localeCompare(String(b.auth_status||""))); return out; } // A→Z, then auth; no status last
@@ -1991,6 +1994,8 @@ function renderInner(){
         <button type="button" class="btn" id="liveBtn" title="Re-read every card's grades, slab and tag straight from admin (Metabase updates on a delay). On the Crop tile it also re-reads each card's crop and takes finished orders off the Orders list">↻ Refresh from admin</button>`:ARCHK(S.kind)||S.kind==="cards"||S.kind==="watches"?`
         <button type="button" class="btn" id="archLiveBtn" title="Re-read every card's status, authentication status, tag and photo straight from admin (Metabase updates on a delay)">↻ Refresh from admin</button>`:""}</div>
       ${locked?"":`<div class="selbar"><button class="btn link" type="button" id="all">Select all</button><button class="btn link" type="button" id="none">Clear</button></div>`}
+      ${S.kind==="arena"&&typeof ARENA_V!=="undefined"&&ARENA_V==="crop"?(()=>{ const n=S.matched.filter(r=>r.crop_state&&r.crop_state!=="done").length, known=S.matched.some(r=>r.crop_state);
+        return `<div class="selbar"><button type="button" class="btn croptodoBtn${S.cropTodoOnly?" on":""}" id="cropTodoOnly" aria-pressed="${!!S.cropTodoOnly}" ${known?"":"disabled title=\"Reading crop status from admin…\""}>${S.cropTodoOnly?"✓ ":""}Only crop to do${known?` (${n})`:""}</button></div>`; })():""}
     </div>
     ${ARCHK(S.kind)||S.kind==="arena"||S.kind==="cards"?`<div class="sactwrap">${statusActions(locked)}</div>`:""}
     ${S.missing&&S.missing.length&&!locked?`<div class="warn"><b>Nothing found for ${esc(S.missing.join(", "))}.</b> ${S.missing.length<[].concat(S.filters.player_name).length?"Showing only the names that matched.":"Nothing else was selected."}</div>`:""}
@@ -2045,8 +2050,8 @@ function tile(r){
   return arenaTile(r,`<div class="tw"><button type="button" class="infob" data-info="${esc(r.item_id)}" aria-label="Details for ${esc(r.player_name)}" title="Details">i</button><button type="button" class="tile${r.overall_check==="pass"?" chk-ok":r.overall_check==="fail"?" chk-bad":""}${r.kind==="arena"&&isLow(r)?" low75":""}" data-id="${r.item_id}" aria-pressed="${on}" ${S.phase!=="review"?"disabled":""} aria-label="${esc(r.player_name)} ${esc(r.set_name)}">
     <span class="check" aria-hidden="true">${on?"✓":""}</span>
     <div class="slab"><div class="lbl"><span>${esc((r.grade||(r.ac?"8AC "+r.ac:"")).toUpperCase())}</span><span>${r.parallel_total?"/"+esc(r.parallel_total):""}</span></div>
-      <div class="art${r.photo_checked?(r.photo_level==="cut"?" fr-bad":r.photo_level==="close"?" fr-warn":" fr-ok"):""}" style="background:linear-gradient(150deg,hsl(${h} 55% 38%),hsl(${(h+40)%360} 60% 22%))">${esc(initials)}${r.img?`<img src="${esc(r.img)}" alt="" loading="lazy" referrerpolicy="no-referrer" onload="tileFit(this,'${esc(r.item_id)}')" onerror="this.remove()">`:""}</div></div>
-    ${r.photo_checked?`<div class="tword ${r.photo_level==="cut"?"tw-bad":r.photo_level==="close"?"tw-warn":"tw-ok"}" title="${esc(r.photo_issue||"Whole card in frame, even space on all sides")}">${r.photo_level==="cut"?"✕ FAIL":r.photo_level==="close"?"⚠ CHECK":"✓ PASS"}</div>`:""}
+      <div class="art${photoChecksOn()&&r.photo_checked?(r.photo_level==="cut"?" fr-bad":r.photo_level==="close"?" fr-warn":" fr-ok"):""}" style="background:linear-gradient(150deg,hsl(${h} 55% 38%),hsl(${(h+40)%360} 60% 22%))">${esc(initials)}${r.img?`<img src="${esc(r.img)}" alt="" loading="lazy" referrerpolicy="no-referrer" onload="tileFit(this,'${esc(r.item_id)}')" onerror="this.remove()">`:""}</div></div>
+    ${photoChecksOn()&&r.photo_checked?`<div class="tword ${r.photo_level==="cut"?"tw-bad":r.photo_level==="close"?"tw-warn":"tw-ok"}" title="${esc(r.photo_issue||"Whole card in frame, even space on all sides")}">${r.photo_level==="cut"?"✕ FAIL":r.photo_level==="close"?"⚠ CHECK":"✓ PASS"}</div>`:""}
     <div class="name">${esc(r.player_name)}</div>
     ${r.kind==="archived"?archInfo(r):r.kind==="arena"?arenaInfo(r):`<div class="meta">${esc(r.set_name)}${r.insert?" · "+esc(r.insert):""}${r.parallel_name?"<br>"+esc(r.parallel_name):""}</div>
     <div class="row"><span class="dim">${r.kind==="watch"?(r.serial?"Serial "+esc(r.serial):""):"AC "+esc(r.ac)}</span><span class="ev">${money(r.ev)}</span></div>
@@ -2228,7 +2233,8 @@ const CARD_RATIO=2.5/3.5, RATIO_TOL=0.04;
 function photoFit(w,h){ if(!w||!h) return null; const r=w/h, off=Math.abs(r-CARD_RATIO)/CARD_RATIO;
   return {w,h,r,ok:off<=RATIO_TOL,why:w>h?"sideways (wider than tall)":r>CARD_RATIO?"too wide for its height: top or bottom cut off":"too tall for its width: a side cut off",in:`${(w/300).toFixed(2)} × ${(h/300).toFixed(2)} in at 300 DPI`}; }
 // popup photos: size under each, red flag when it isn't card-shaped
-function fitNote(img){ const f=photoFit(img.naturalWidth,img.naturalHeight), cap=img.closest("figure")&&img.closest("figure").querySelector(".fitnote"); if(!f||!cap) return;
+const photoChecksOn=()=>typeof ARENA_V!=="undefined"&&ARENA_V==="crop"; // set to "club"/"customer" on every other tile
+function fitNote(img){ if(!photoChecksOn()){ const cap=img.closest("figure")&&img.closest("figure").querySelector(".fitnote"); if(cap) cap.remove(); return; } const f=photoFit(img.naturalWidth,img.naturalHeight), cap=img.closest("figure")&&img.closest("figure").querySelector(".fitnote"); if(!f||!cap) return;
   const pc=PCHK[img.getAttribute("src")], m=pc&&pc.margins, mtxt=m?`space around the card: top ${(m.top*100).toFixed(1)}% · bottom ${(m.bottom*100).toFixed(1)}% · left ${(m.left*100).toFixed(1)}% · right ${(m.right*100).toFixed(1)}%`:"";
   const issues=[...(f.ok?[]:[`not 2.5 × 3.5: ${f.why}`]),...(pc&&!pc.ok?pc.issues:[])];
   const closeOnly=f.ok&&pc&&pc.level==="close";
@@ -2238,7 +2244,7 @@ function fitNote(img){ const f=photoFit(img.naturalWidth,img.naturalHeight), cap
   cap.title=(issues.length?issues.join(" · ")+" · ":"")+`${f.w} × ${f.h} px${mtxt?" · "+mtxt:""}`;
   cap.innerHTML=`<div class="pword">${word}</div><div class="pdet">${issues.length?issues.map(esc).join("<br>")+"<br>":""}${f.w} × ${f.h} px · ${f.in}${mtxt?`<br>${mtxt}`:pc?"":""}${!issues.length?` · fits 2.5 × 3.5${pc?" · whole card in frame":""}`:""}</div>`; }
 // tiles: a ⚠ badge on the photo when it isn't card-shaped
-function tileFit(img,id){ const f=photoFit(img.naturalWidth,img.naturalHeight); const c=(S&&S.matched||[]).find(x=>x.item_id===id); if(!f) return;
+function tileFit(img,id){ if(!photoChecksOn()) return; const f=photoFit(img.naturalWidth,img.naturalHeight); const c=(S&&S.matched||[]).find(x=>x.item_id===id); if(!f) return;
   if(c) c.photo_fit=f; const art=img.closest(".art"); if(!art) return; art.querySelectorAll(".fitbadge:not(.pc)").forEach(x=>x.remove());
   if(!f.ok){ const b=document.createElement("span"); b.className="fitbadge"; b.title=`Photo isn't 2.5 × 3.5 (${f.w}×${f.h} px, ratio ${f.r.toFixed(3)}): ${f.why}`; b.textContent="⚠ not 2.5×3.5"; art.appendChild(b); } }
 // which cards already have their crop approved (front + back), read from admin so it holds across sessions and people
@@ -2602,6 +2608,7 @@ function bindSummary(){
   const lb=$("#liveBtn"); if(lb) lb.onclick=async()=>{ lb.disabled=true; lb.textContent="Refreshing…"; await refreshLive(); };
   const alb=$("#archLiveBtn"); if(alb) alb.onclick=async()=>{ alb.disabled=true; alb.textContent="Refreshing…"; await refreshArchived(); };
   const o75=$("#only75"); if(o75) o75.onclick=()=>{ S.only75=!S.only75; recompute(true); };
+  const ctd2=$("#cropTodoOnly"); if(ctd2) ctd2.onclick=()=>{ S.cropTodoOnly=!S.cropTodoOnly; recompute(true); };
   // Corners → none: override + approve each corner with every annotation at none (admin recalculates Corners)
 
   document.querySelectorAll(".sabtn").forEach(b=>b.onclick=()=>{ const k=b.dataset.sk, op=b.dataset.sop; S.plan=S.plan||{};
